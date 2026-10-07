@@ -12,6 +12,7 @@ No install, no build step, no dependencies. One HTML page plus one JavaScript fi
 - **Harvesters** collect supply piles and bring credits back to a Supply Center.
 - Tap a **building** to train units from it. Tap a **unit** to select it, then tap the ground to move (attack-move) or an enemy to attack. **SELECT ARMY** grabs every combat unit.
 - With a **Dozer** alive, pick a building in the panel, tap the map to position it, then **BUILD HERE**. Buildings must be near your base and are constructed over time by the Dozer.
+- Every production building has a yellow **exit ramp**. New units leave from that side, which always faces open ground, so you can build right against the map edge.
 - Destroy every enemy building to win. Lose your Command Center and the battle is lost.
 
 ## Generals

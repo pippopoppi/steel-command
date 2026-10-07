@@ -90,11 +90,67 @@ function mkUnit(team, type, x, y) {
   const U = UNITS[type];
   let hp = U.hp; if (team === 'blue' && gen() === 'armor' && U.vehicle && !U.builder && !U.harvester) hp = Math.round(hp * 1.25);
   const u = { id: nextId++, kind: 'unit', team, type, x, y, hp, maxHp: hp, r: U.r, speed: U.speed, range: U.range || 0, dps: U.dps || 0,
-    order: null, tx: null, ty: null, target: null, cd: Math.random() * 0.5, hit: 0, dead: false, cargo: 0, state: 'idle', pile: null, build: null, face: -Math.PI / 2, ph: Math.random() * TAU };
+    order: null, tx: null, ty: null, target: null, cd: Math.random() * 0.5, hit: 0, dead: false, cargo: 0, state: 'idle', pile: null, build: null, face: -Math.PI / 2, ph: Math.random() * TAU, wp: null, stuckT: 0 };
   G.units.push(u); return u;
 }
 const alive = e => !e.dead;
 const own = team => ({ units: G.units.filter(u => u.team === team && !u.dead), bldgs: G.bldgs.filter(b => b.team === team && !b.dead) });
+
+// ---------- doors & navigation ----------
+const EDGE = 20;                  // keep unit paths this far from the map edge
+const SIDES = { top: [0, -1], bottom: [0, 1], left: [-1, 0], right: [1, 0] };
+// Something (other than `skip`) occupying the circle at x,y?
+function blockedAt(x, y, r, skip) {
+  if (x < r || y < r || x > MW - r || y > MH - r) return true;
+  for (const b of G.bldgs) if (!b.dead && b !== skip && circleRect(x, y, r, rectOf(b))) return true;
+  return false;
+}
+function sidePoint(b, side, gap) { const [dx, dy] = SIDES[side]; return { x: b.x + dx * (b.w / 2 + gap), y: b.y + dy * (b.h / 2 + gap) }; }
+// Which side of a building units use. Prefer facing the enemy, then whichever flank points at the map
+// centre, and never a side that is against the map edge or another building.
+function doorSide(b) {
+  const flank = b.x < MW / 2 ? ['right', 'left'] : ['left', 'right'];
+  const order = b.team === 'blue' ? ['top', ...flank, 'bottom'] : ['bottom', ...flank, 'top'];
+  for (const side of order) {
+    const p = sidePoint(b, side, 22), q = sidePoint(b, side, 60);
+    if (p.x < EDGE || p.y < EDGE || p.x > MW - EDGE || p.y > MH - EDGE) continue;
+    if (blockedAt(p.x, p.y, 16, b) || blockedAt(q.x, q.y, 10, b)) continue;
+    return side;
+  }
+  return order[0];
+}
+function doorPoint(b, gap) { return sidePoint(b, doorSide(b), gap); }
+// A free spot next to a building (for drop-offs and construction), nearest to `from`.
+function approachPoint(b, from, gap) {
+  let best = null, bd = Infinity;
+  for (const side in SIDES) {
+    const p = sidePoint(b, side, gap);
+    if (blockedAt(p.x, p.y, 12, b)) continue;
+    const d = dist(p, from); if (d < bd) { bd = d; best = p; }
+  }
+  return best || sidePoint(b, doorSide(b), gap);
+}
+// Is the straight walk from u to (x,y) free of buildings?
+function clearPath(u, x, y) {
+  const d = Math.hypot(x - u.x, y - u.y), n = Math.max(1, Math.ceil(d / 6));
+  for (let i = 1; i <= n; i++) { const px = u.x + (x - u.x) * i / n, py = u.y + (y - u.y) * i / n; if (blockedAt(px, py, u.r + 1)) return false; }
+  return true;
+}
+// Pick a corner of `rc` (padded by r) to walk around on the way from u to (tx,ty). Corners the
+// unit can walk straight to are strongly preferred so it never aims through the obstacle itself.
+function detourCorner(u, rc, tx, ty) {
+  const pad = u.r + 8, cs = [[rc.x - pad, rc.y - pad], [rc.x + rc.w + pad, rc.y - pad], [rc.x - pad, rc.y + rc.h + pad], [rc.x + rc.w + pad, rc.y + rc.h + pad]];
+  let best = null, bd = Infinity;
+  for (const [cx, cy] of cs) {
+    const x = clamp(cx, EDGE, MW - EDGE), y = clamp(cy, EDGE, MH - EDGE);
+    const here = Math.hypot(x - u.x, y - u.y);
+    if (here < 6 || blockedAt(x, y, u.r + 1)) continue;
+    const d = here + Math.hypot(tx - x, ty - y) + (clearPath(u, x, y) ? 0 : 1000);
+    if (d < bd) { bd = d; best = { x, y }; }
+  }
+  return best;
+}
+function stepFree(u, nx, ny) { return nx >= EDGE - 6 && ny >= EDGE - 6 && nx <= MW - EDGE + 6 && ny <= MH - EDGE + 6 && !G.bldgs.some(b => !b.dead && circleRect(nx, ny, u.r + 1, rectOf(b))); }
 
 function startLevel(n) {
   L = { n };
@@ -134,12 +190,12 @@ function orderMove(units, x, y, attack) {
   const n = units.length, cols = Math.ceil(Math.sqrt(n));
   units.forEach((u, i) => {
     const ox = (i % cols - (cols - 1) / 2) * 22, oy = (Math.floor(i / cols) - (Math.ceil(n / cols) - 1) / 2) * 22;
-    u.order = attack ? 'amove' : 'move'; u.tx = clamp(x + ox, 10, MW - 10); u.ty = clamp(y + oy, 10, MH - 10); u.target = null;
+    u.order = attack ? 'amove' : 'move'; u.tx = clamp(x + ox, EDGE, MW - EDGE); u.ty = clamp(y + oy, EDGE, MH - EDGE); u.target = null; u.wp = null;
     if (UNITS[u.type].harvester) { u.state = 'manual'; u.pile = null; }
     if (UNITS[u.type].builder) u.build = null;
   });
 }
-function orderAttack(units, target) { for (const u of units) { if (u.dps > 0) { u.order = 'attack'; u.target = target; } else { u.order = 'move'; u.tx = target.x; u.ty = target.y; } } }
+function orderAttack(units, target) { for (const u of units) { u.wp = null; if (u.dps > 0) { u.order = 'attack'; u.target = target; } else { u.order = 'move'; u.tx = target.x; u.ty = target.y; } } }
 function selected() { return G.sel.map(id => G.units.find(u => u.id === id) || G.bldgs.find(b => b.id === id)).filter(e => e && !e.dead); }
 function selectedUnits() { return selected().filter(e => e.kind === 'unit'); }
 function selectArmy() { G.sel = own('blue').units.filter(u => u.dps > 0).map(u => u.id); G.panelDirty = true; }
@@ -205,11 +261,30 @@ function fireAt(src, tgt, dt) {
   damage(tgt, src.dps * 0.55, src);
   if (Math.random() < 0.5) beep(heavy ? 120 : 900, heavy ? 0.12 : 0.04, heavy ? 'sawtooth' : 'square', 0.025, heavy ? 50 : 300);
 }
+// Walk toward (x,y). A step that would enter a building is replaced by a detour via one of its
+// corners, so units flow around obstacles instead of grinding against them or the map edge.
 function moveToward(u, x, y, dt, stopAt) {
-  const dx = x - u.x, dy = y - u.y, d = Math.hypot(dx, dy);
-  if (d <= stopAt) return true;
-  const sp = Math.min(d, u.speed * dt);
-  u.x += dx / d * sp; u.y += dy / d * sp; u.face = Math.atan2(dy, dx);
+  if (Math.hypot(x - u.x, y - u.y) <= stopAt) { u.wp = null; u.stuckT = 0; return true; }
+  if (u.wp && Math.hypot(u.wp.x - u.x, u.wp.y - u.y) <= 4) u.wp = null;
+  const gx = u.wp ? u.wp.x : x, gy = u.wp ? u.wp.y : y;
+  const dx = gx - u.x, dy = gy - u.y, d = Math.hypot(dx, dy) || 1;
+  const sp = Math.min(d, u.speed * dt), vx = dx / d * sp, vy = dy / d * sp;
+  u.face = Math.atan2(dy, dx);
+  if (stepFree(u, u.x + vx, u.y + vy)) { u.x += vx; u.y += vy; u.stuckT = 0; return false; }
+  // blocked: plan a detour around whatever is in the way (a building, or the map edge)
+  const hit = G.bldgs.find(b => !b.dead && circleRect(u.x + vx, u.y + vy, u.r + 1, rectOf(b)));
+  const rc = hit ? rectOf(hit) : { x: clamp(u.x + vx, EDGE, MW - EDGE), y: clamp(u.y + vy, EDGE, MH - EDGE), w: 0, h: 0 };
+  u.wp = detourCorner(u, rc, x, y) || u.wp;
+  // and slide along whichever axis is open this frame so nobody ever freezes in place
+  if (Math.abs(vx) > 0.01 && stepFree(u, u.x + vx, u.y)) { u.x += vx; u.stuckT = 0; }
+  else if (Math.abs(vy) > 0.01 && stepFree(u, u.x, u.y + vy)) { u.y += vy; u.stuckT = 0; }
+  else {
+    u.stuckT = (u.stuckT || 0) + dt;
+    if (u.stuckT > 1) { // wedged (e.g. between two buildings): hop to any open spot nearby
+      for (let i = 0; i < 12; i++) { const a = Math.random() * TAU, px = clamp(u.x + Math.cos(a) * 40, EDGE, MW - EDGE), py = clamp(u.y + Math.sin(a) * 40, EDGE, MH - EDGE); if (!blockedAt(px, py, u.r + 1)) { u.wp = { x: px, y: py }; break; } }
+      u.stuckT = 0;
+    }
+  }
   return false;
 }
 
@@ -224,7 +299,8 @@ function updateUnit(u, dt) {
       u.state = 'return';
       const depot = depots.sort((a, b) => dist(a, u) - dist(b, u))[0];
       if (!depot) { u.state = 'idle'; return; }
-      if (moveToward(u, depot.x, depot.y + depot.h / 2 + 14, dt, 6)) { const v = u.cargo; u.cargo = 0; G.credits[team] += v; if (team === 'blue') G.floats.push({ x: u.x, y: u.y - 14, text: '+' + v, life: 0.9, color: '#fde047' }); u.state = 'idle'; }
+      const drop = approachPoint(depot, u, 16);
+      if (moveToward(u, drop.x, drop.y, dt, 8)) { const v = u.cargo; u.cargo = 0; G.credits[team] += v; if (team === 'blue') G.floats.push({ x: u.x, y: u.y - 14, text: '+' + v, life: 0.9, color: '#fde047' }); u.state = 'idle'; }
       return;
     }
     if (!u.pile || u.pile.amount <= 0) { u.pile = G.piles.filter(p => p.amount > 0).sort((a, b) => dist(a, u) - dist(b, u))[0] || null; if (!u.pile) { u.state = 'idle'; return; } }
@@ -236,7 +312,8 @@ function updateUnit(u, dt) {
     if (u.build) {
       const b = u.build;
       if (b.dead || b.progress >= 1) { u.build = null; return; }
-      if (moveToward(u, b.x, b.y + b.h / 2 + 18, dt, 8)) {
+      const site = approachPoint(b, u, 18);
+      if (moveToward(u, site.x, site.y, dt, 10)) {
         b.progress = Math.min(1, b.progress + dt / BUILDINGS[b.type].time);
         b.hp = Math.max(b.hp, b.maxHp * b.progress);
         if (b.progress >= 1) { u.build = null; if (team === 'blue') { G.stats.built++; toast(BUILDINGS[b.type].name + ' complete', 1.3); beep(660, 0.2, 'triangle', 0.05); G.panelDirty = true; } const pend = G.bldgs.find(o => !o.dead && o.team === team && o.progress < 1 && !G.units.some(d => d.build === o)); if (pend) u.build = pend; }
@@ -278,8 +355,9 @@ function updateBuilding(b, dt) {
     b.prodT += dt;
     if (b.prodT >= time) {
       b.prodT = 0; b.queue.shift();
-      const u = mkUnit(b.team, type, b.x + (Math.random() - 0.5) * 30, b.y + (b.team === 'blue' ? b.h / 2 + 16 : b.h / 2 + 16));
-      if (b.team === 'blue') { G.stats.trained++; G.panelDirty = true; orderMove([u], b.x, b.y + b.h / 2 + 60 - (type === 'harvester' ? 0 : 0), false); if (UNITS[type].harvester) u.state = 'idle', u.order = null; }
+      const side = doorSide(b), [sx, sy] = SIDES[side], door = sidePoint(b, side, UNITS[type].r + 6), rally = sidePoint(b, side, 64);
+      const u = mkUnit(b.team, type, door.x + sy * (Math.random() - 0.5) * 24, door.y + sx * (Math.random() - 0.5) * 24);
+      if (b.team === 'blue') { G.stats.trained++; G.panelDirty = true; orderMove([u], rally.x, rally.y, false); if (UNITS[type].harvester) u.state = 'idle', u.order = null; }
       else orderMove([u], 500 + (Math.random() - 0.5) * 200, 470, true);
     }
   }
@@ -338,7 +416,7 @@ function update(dt) {
       const m = Math.min(pl, pr, pt, pb);
       if (m === pl) a.x = rc.x - a.r; else if (m === pr) a.x = rc.x + rc.w + a.r; else if (m === pt) a.y = rc.y - a.r; else a.y = rc.y + rc.h + a.r;
     }
-    a.x = clamp(a.x, 8, MW - 8); a.y = clamp(a.y, 8, MH - 8);
+    a.x = clamp(a.x, EDGE - 6, MW - EDGE + 6); a.y = clamp(a.y, EDGE - 6, MH - EDGE + 6);
   }
   G.units = G.units.filter(alive); G.bldgs = G.bldgs.filter(alive);
   G.sel = G.sel.filter(id => G.units.some(u => u.id === id) || G.bldgs.some(b => b.id === id));
@@ -386,6 +464,13 @@ function drawBuilding(b) {
   ctx.fillStyle = '#334155'; roundRect(ctx, rc.x, rc.y, rc.w, rc.h, 8); ctx.fill();
   ctx.fillStyle = col; roundRect(ctx, rc.x + 4, rc.y + 4, rc.w - 8, rc.h - 8, 6); ctx.fill();
   ctx.fillStyle = T.main; ctx.fillRect(rc.x + 4, rc.y + 4, rc.w - 8, 6);
+  if (B.builds && b.progress >= 1) { // door / exit ramp on the side units leave from
+    const side = doorSide(b); ctx.fillStyle = 'rgba(15,23,42,0.75)';
+    if (side === 'top') ctx.fillRect(b.x - 10, rc.y, 20, 6); else if (side === 'bottom') ctx.fillRect(b.x - 10, rc.y + rc.h - 6, 20, 6);
+    else if (side === 'left') ctx.fillRect(rc.x, b.y - 10, 6, 20); else ctx.fillRect(rc.x + rc.w - 6, b.y - 10, 6, 20);
+    ctx.fillStyle = '#fde047'; const p = sidePoint(b, side, 5);
+    ctx.fillRect(p.x - (side === 'top' || side === 'bottom' ? 7 : 1.5), p.y - (side === 'top' || side === 'bottom' ? 1.5 : 7), side === 'top' || side === 'bottom' ? 14 : 3, side === 'top' || side === 'bottom' ? 3 : 14);
+  }
   if (b.type === 'cc') { ctx.fillStyle = '#1e293b'; roundRect(ctx, b.x - 22, b.y - 18, 44, 30, 5); ctx.fill(); ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(b.x, b.y - 2, 12, 0, TAU); ctx.stroke(); ctx.fillStyle = '#e2e8f0'; ctx.fillRect(b.x - 1, b.y - 16, 2, 14); }
   else if (b.type === 'supply') { ctx.fillStyle = '#854d0e'; for (let i = 0; i < 3; i++) { ctx.fillRect(b.x - 26 + i * 18, b.y - 6, 14, 18); } ctx.fillStyle = '#fde68a'; ctx.fillRect(b.x - 30, b.y - 12, 60, 4); }
   else if (b.type === 'barracks') { ctx.fillStyle = '#14532d'; roundRect(ctx, b.x - 24, b.y - 10, 48, 26, 4); ctx.fill(); ctx.fillStyle = '#86efac'; ctx.fillRect(b.x - 4, b.y - 2, 8, 18); }
@@ -648,5 +733,5 @@ document.addEventListener('visibilitychange', () => { last = performance.now(); 
 showMenu();
 requestAnimationFrame(frame);
 
-window.SteelCommand = { G, save, startLevel, update, draw, placeBuilding, queueUnit, orderMove, orderAttack, selectArmy, own, UNITS, BUILDINGS, GENERALS, get level() { return L; } };
+window.SteelCommand = { G, save, startLevel, update, draw, placeBuilding, queueUnit, orderMove, orderAttack, selectArmy, own, doorSide, UNITS, BUILDINGS, GENERALS, get level() { return L; } };
 })();
