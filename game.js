@@ -20,12 +20,12 @@ const BUILDINGS = {
   turret:   { name: 'Gun Turret',     w: 44,  h: 44, hp: 900,  cost: 600,  time: 8,  range: 210, dps: 36, color: '#dc2626' },
 };
 const UNITS = {
-  dozer:     { name: 'Dozer',          cost: 600, hp: 400, speed: 70,  time: 8,  r: 11, builder: true, vehicle: true },
-  harvester: { name: 'Harvester',      cost: 800, hp: 600, speed: 85,  time: 10, r: 12, harvester: true, vehicle: true, cargo: 150 },
-  rifle:     { name: 'Rifleman',       cost: 150, hp: 110, speed: 60,  time: 4,  r: 6,  range: 115, dps: 14, vsVeh: 0.35 },
-  rocket:    { name: 'Rocket Trooper', cost: 300, hp: 100, speed: 55,  time: 6,  r: 6,  range: 150, dps: 24, vsVeh: 1.6, vsInf: 0.45 },
-  tank:      { name: 'Battle Tank',    cost: 800, hp: 720, speed: 75,  time: 10, r: 13, range: 140, dps: 36, vsInf: 0.6, vehicle: true },
-  buggy:     { name: 'Rocket Buggy',   cost: 600, hp: 300, speed: 125, time: 7,  r: 10, range: 165, dps: 26, vsVeh: 1.3, vsInf: 0.5, vehicle: true },
+  dozer:     { name: 'Dozer',          cost: 600, hp: 400, speed: 70,  time: 8,  r: 11, builder: true, vehicle: true, role: 'builds & repairs' },
+  harvester: { name: 'Harvester',      cost: 800, hp: 600, speed: 85,  time: 10, r: 12, harvester: true, vehicle: true, cargo: 150, role: 'collects supplies' },
+  rifle:     { name: 'Rifleman',       cost: 150, hp: 110, speed: 60,  time: 4,  r: 6,  range: 115, dps: 14, vsVeh: 0.35, role: 'anti-infantry' },
+  rocket:    { name: 'Rocket Trooper', cost: 300, hp: 100, speed: 55,  time: 6,  r: 6,  range: 150, dps: 24, vsVeh: 1.6, vsInf: 0.45, role: 'anti-vehicle' },
+  tank:      { name: 'Battle Tank',    cost: 800, hp: 720, speed: 75,  time: 10, r: 13, range: 140, dps: 36, vsInf: 0.6, vehicle: true, role: 'all-round armor' },
+  buggy:     { name: 'Rocket Buggy',   cost: 600, hp: 300, speed: 125, time: 7,  r: 10, range: 165, dps: 26, vsVeh: 1.3, vsInf: 0.5, vehicle: true, role: 'fast anti-vehicle' },
 };
 const GENERALS = {
   armor:    { name: 'General Steele',  title: 'Armor',    desc: 'Tanks and buggies have +25% hull. War Factory costs 20% less.', icon: '🛡️' },
@@ -90,7 +90,7 @@ function mkUnit(team, type, x, y) {
   const U = UNITS[type];
   let hp = U.hp; if (team === 'blue' && gen() === 'armor' && U.vehicle && !U.builder && !U.harvester) hp = Math.round(hp * 1.25);
   const u = { id: nextId++, kind: 'unit', team, type, x, y, hp, maxHp: hp, r: U.r, speed: U.speed, range: U.range || 0, dps: U.dps || 0,
-    order: null, tx: null, ty: null, target: null, cd: Math.random() * 0.5, hit: 0, dead: false, cargo: 0, state: 'idle', pile: null, build: null, face: -Math.PI / 2, ph: Math.random() * TAU, wp: null, stuckT: 0 };
+    order: null, tx: null, ty: null, target: null, cd: Math.random() * 0.5, hit: 0, dead: false, cargo: 0, state: 'idle', pile: null, build: null, repair: null, face: -Math.PI / 2, ph: Math.random() * TAU, wp: null, stuckT: 0 };
   G.units.push(u); return u;
 }
 const alive = e => !e.dead;
@@ -131,9 +131,10 @@ function approachPoint(b, from, gap) {
   return best || sidePoint(b, doorSide(b), gap);
 }
 // Is the straight walk from u to (x,y) free of buildings?
-function clearPath(u, x, y) {
-  const d = Math.hypot(x - u.x, y - u.y), n = Math.max(1, Math.ceil(d / 6));
-  for (let i = 1; i <= n; i++) { const px = u.x + (x - u.x) * i / n, py = u.y + (y - u.y) * i / n; if (blockedAt(px, py, u.r + 1)) return false; }
+function clearPath(u, x, y) { return clearLine(u.x, u.y, x, y, u.r + 1); }
+function clearLine(x0, y0, x1, y1, r) {
+  const d = Math.hypot(x1 - x0, y1 - y0), n = Math.max(1, Math.ceil(d / 6));
+  for (let i = 1; i <= n; i++) { if (blockedAt(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, r)) return false; }
   return true;
 }
 // Pick a corner of `rc` (padded by r) to walk around on the way from u to (tx,ty). Corners the
@@ -145,7 +146,8 @@ function detourCorner(u, rc, tx, ty) {
     const x = clamp(cx, EDGE, MW - EDGE), y = clamp(cy, EDGE, MH - EDGE);
     const here = Math.hypot(x - u.x, y - u.y);
     if (here < 6 || blockedAt(x, y, u.r + 1)) continue;
-    const d = here + Math.hypot(tx - x, ty - y) + (clearPath(u, x, y) ? 0 : 1000);
+    // penalise corners we cannot walk straight to, and corners from which the goal is still blocked
+    const d = here + Math.hypot(tx - x, ty - y) + (clearPath(u, x, y) ? 0 : 1000) + (clearLine(x, y, tx, ty, u.r + 1) ? 0 : 300);
     if (d < bd) { bd = d; best = { x, y }; }
   }
   return best;
@@ -192,7 +194,7 @@ function orderMove(units, x, y, attack) {
     const ox = (i % cols - (cols - 1) / 2) * 22, oy = (Math.floor(i / cols) - (Math.ceil(n / cols) - 1) / 2) * 22;
     u.order = attack ? 'amove' : 'move'; u.tx = clamp(x + ox, EDGE, MW - EDGE); u.ty = clamp(y + oy, EDGE, MH - EDGE); u.target = null; u.wp = null;
     if (UNITS[u.type].harvester) { u.state = 'manual'; u.pile = null; }
-    if (UNITS[u.type].builder) u.build = null;
+    if (UNITS[u.type].builder) { u.build = null; u.repair = null; }
   });
 }
 function orderAttack(units, target) { for (const u of units) { u.wp = null; if (u.dps > 0) { u.order = 'attack'; u.target = target; } else { u.order = 'move'; u.tx = target.x; u.ty = target.y; } } }
@@ -221,8 +223,14 @@ function placeBuilding(type, x, y, team) {
   const b = mkBldg(team, type, x, y, false);
   const free = own(team).units.filter(u => UNITS[u.type].builder && !u.build);
   const d = (free.length ? free : [dozer]).sort((a, c) => dist(a, b) - dist(c, b))[0];
-  d.build = b; d.order = null;
+  d.build = b; d.repair = null; d.order = null;
   return null;
+}
+const REPAIR_COST = 0.25;   // fraction of the building's price to repair it from 0 to full
+function orderRepair(units, b) {
+  let any = false;
+  for (const u of units) if (UNITS[u.type].builder) { u.repair = b; u.build = null; u.order = null; u.wp = null; any = true; }
+  return any;
 }
 
 // ---------- simulation ----------
@@ -253,13 +261,16 @@ function damage(target, amount, from) {
 function fireAt(src, tgt, dt) {
   src.cd -= dt;
   if (src.cd > 0) return;
-  src.cd = 0.55;
+  const rocket = src.kind === 'unit' && src.type === 'rocket';
+  const period = rocket ? 1.3 : 0.55;           // rockets: slow, heavy single shots (same DPS)
+  src.cd = period;
   const tx = tgt.kind === 'bldg' ? clamp(src.x, tgt.x - tgt.w / 2, tgt.x + tgt.w / 2) : tgt.x, ty = tgt.kind === 'bldg' ? clamp(src.y, tgt.y - tgt.h / 2, tgt.y + tgt.h / 2) : tgt.y;
   src.face = Math.atan2(ty - src.y, tx - src.x);
   const heavy = src.kind === 'bldg' || UNITS[src.type].vehicle;
-  G.shots.push({ x: src.x, y: src.y, tx, ty, life: heavy ? 0.25 : 0.12, heavy, team: src.team });
-  damage(tgt, src.dps * 0.55, src);
-  if (Math.random() < 0.5) beep(heavy ? 120 : 900, heavy ? 0.12 : 0.04, heavy ? 'sawtooth' : 'square', 0.025, heavy ? 50 : 300);
+  G.shots.push({ x: src.x, y: src.y, tx, ty, life: heavy ? 0.25 : rocket ? 0.3 : 0.12, heavy, rocket, team: src.team });
+  if (rocket) boom(tx, ty, 4);
+  damage(tgt, src.dps * period, src);
+  if (Math.random() < 0.5) beep(heavy ? 120 : rocket ? 300 : 900, heavy ? 0.12 : rocket ? 0.18 : 0.04, heavy ? 'sawtooth' : rocket ? 'sawtooth' : 'square', 0.025, heavy ? 50 : rocket ? 60 : 300);
 }
 // Walk toward (x,y). A step that would enter a building is replaced by a detour via one of its
 // corners, so units flow around obstacles instead of grinding against them or the map edge.
@@ -320,7 +331,26 @@ function updateUnit(u, dt) {
       }
       return;
     }
-    if (u.order === 'move' && moveToward(u, u.tx, u.ty, dt, 4)) u.order = null;
+    if (u.order === 'move') { if (moveToward(u, u.tx, u.ty, dt, 4)) u.order = null; return; }
+    // repairs: an explicit order, or (when idle) any damaged building near the base
+    if (u.repair && (u.repair.dead || u.repair.hp >= u.repair.maxHp || u.repair.team !== team)) u.repair = null;
+    if (!u.repair) {
+      let best = null, bd = 320 * 320;
+      for (const b of G.bldgs) { if (b.dead || b.team !== team || b.progress < 1 || b.hp >= b.maxHp * 0.98) continue; const d2 = (b.x - u.x) ** 2 + (b.y - u.y) ** 2; if (d2 < bd) { bd = d2; best = b; } }
+      u.repair = best;
+    }
+    if (u.repair) {
+      const b = u.repair, site = approachPoint(b, u, 18);
+      if (moveToward(u, site.x, site.y, dt, 12)) {
+        const rate = b.maxHp / (BUILDINGS[b.type].time * 1.5);              // full repair in 1.5x build time
+        let heal = Math.min(rate * dt, b.maxHp - b.hp);
+        const price = BUILDINGS[b.type].cost * REPAIR_COST / b.maxHp;        // credits per hit point
+        if (price > 0) { const afford = G.credits[team] / price; if (afford < heal) heal = Math.max(0, afford); G.credits[team] -= heal * price; }
+        b.hp += heal; u.face = Math.atan2(b.y - u.y, b.x - u.x);
+        if (heal > 0 && Math.random() < dt * 14) { const rc = rectOf(b), sx = clamp(u.x, rc.x, rc.x + rc.w), sy = clamp(u.y, rc.y, rc.y + rc.h); G.parts.push({ x: sx, y: sy, vx: (Math.random() - 0.5) * 90, vy: -40 - Math.random() * 60, r: 1.5, life: 0.35, color: '#fde047' }); }
+        if (b.hp >= b.maxHp) { b.hp = b.maxHp; u.repair = null; if (team === 'blue') { toast(BUILDINGS[b.type].name + ' repaired', 1.1); beep(880, 0.1, 'triangle', 0.04); } }
+      }
+    }
     return;
   }
   // combat units
@@ -509,9 +539,16 @@ function drawUnit(u) {
     const k = Math.sin(G.t * 10 + u.ph) * (u.order || u.target ? 2 : 0);
     ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(1, 6, 6, 3, 0, 0, TAU); ctx.fill();
     ctx.fillStyle = T.dark; ctx.fillRect(-4, 2 + k, 3, 5); ctx.fillRect(1, 2 - k, 3, 5);
+    const rk = u.type === 'rocket';
+    if (rk) { ctx.scale(1.2, 1.2); ctx.fillStyle = '#374151'; roundRect(ctx, -7, -4, 14, 9, 3); ctx.fill(); } // bigger silhouette + backpack
     ctx.fillStyle = hit ? '#fff' : T.main; roundRect(ctx, -5, -5, 10, 9, 3); ctx.fill();
-    ctx.fillStyle = hit ? '#fff' : (u.type === 'rocket' ? '#1e293b' : T.dark); ctx.beginPath(); ctx.arc(0, -8, 4, 0, TAU); ctx.fill();
-    ctx.save(); ctx.rotate(u.face); ctx.fillStyle = '#111827'; ctx.fillRect(2, -1, u.type === 'rocket' ? 12 : 9, 2); ctx.restore();
+    if (rk) { ctx.fillStyle = '#fb923c'; ctx.fillRect(-5, -2, 10, 2); }                  // orange chest stripe
+    ctx.fillStyle = hit ? '#fff' : (rk ? '#1e293b' : T.dark); ctx.beginPath(); ctx.arc(0, -8, 4, 0, TAU); ctx.fill();
+    if (rk) { ctx.fillStyle = '#fb923c'; ctx.fillRect(-4, -9, 8, 1.5); }                 // orange helmet band
+    ctx.save(); ctx.rotate(u.face);
+    if (rk) { ctx.fillStyle = '#4b5563'; ctx.fillRect(-4, -4, 16, 4); ctx.fillStyle = '#fb923c'; ctx.fillRect(10, -4, 3, 4); } // shoulder launcher
+    else { ctx.fillStyle = '#111827'; ctx.fillRect(2, -1, 9, 2); }
+    ctx.restore();
   }
   ctx.restore();
   if (u.hp < u.maxHp || sel) { const w = u.r * 2.4; ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(u.x - w / 2, u.y - u.r - 9, w, 3); ctx.fillStyle = u.hp / u.maxHp > 0.5 ? '#4ade80' : '#f87171'; ctx.fillRect(u.x - w / 2, u.y - u.r - 9, w * clamp(u.hp / u.maxHp, 0, 1), 3); }
@@ -543,7 +580,15 @@ function draw() {
   for (const id of G.sel) { const u = G.units.find(x => x.id === id); if (u && u.order && u.tx != null && u.kind === 'unit') { ctx.strokeStyle = u.order === 'amove' ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1; ctx.setLineDash([3, 5]); ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(u.tx, u.ty); ctx.stroke(); ctx.setLineDash([]); } }
   for (const u of G.units) if (!UNITS[u.type].vehicle) drawUnit(u);
   for (const u of G.units) if (UNITS[u.type].vehicle) drawUnit(u);
-  for (const s of G.shots) { ctx.strokeStyle = s.heavy ? 'rgba(253,224,71,0.9)' : (s.team === 'blue' ? 'rgba(191,219,254,0.9)' : 'rgba(254,202,202,0.9)'); ctx.lineWidth = s.heavy ? 3 : 1.2; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.tx, s.ty); ctx.stroke(); if (s.heavy) { ctx.fillStyle = '#fb923c'; ctx.beginPath(); ctx.arc(s.tx, s.ty, 5 * (s.life / 0.25), 0, TAU); ctx.fill(); } }
+  for (const s of G.shots) {
+    if (s.rocket) { // smoke trail + orange warhead flying toward the target, then a burst
+      const k = 1 - s.life / 0.3, px = s.x + (s.tx - s.x) * Math.min(1, k * 1.6), py = s.y + (s.ty - s.y) * Math.min(1, k * 1.6);
+      ctx.strokeStyle = 'rgba(203,213,225,0.55)'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(px, py); ctx.stroke();
+      ctx.fillStyle = '#fb923c'; ctx.beginPath(); ctx.arc(px, py, k < 0.6 ? 2.5 : 7 * (1 - k), 0, TAU); ctx.fill();
+      continue;
+    }
+    ctx.strokeStyle = s.heavy ? 'rgba(253,224,71,0.9)' : (s.team === 'blue' ? 'rgba(191,219,254,0.9)' : 'rgba(254,202,202,0.9)'); ctx.lineWidth = s.heavy ? 3 : 1.2; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.tx, s.ty); ctx.stroke(); if (s.heavy) { ctx.fillStyle = '#fb923c'; ctx.beginPath(); ctx.arc(s.tx, s.ty, 5 * (s.life / 0.25), 0, TAU); ctx.fill(); }
+  }
   for (const p of G.parts) { ctx.globalAlpha = clamp(p.life * 2, 0, 1); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill(); }
   ctx.globalAlpha = 1;
   for (const f of G.floats) { ctx.globalAlpha = clamp(f.life, 0, 1); ctx.fillStyle = f.color; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(f.text, f.x, f.y); }
@@ -607,13 +652,15 @@ function renderPanel() {
     html = `<div class="ptitle">Placing ${B.name} · $${bldgCost(G.placing, 'blue')}</div><div class="pmsg">${err || 'Ready to build'}</div><div class="prow"><button class="pb ok" data-act="confirm" ${err ? 'disabled' : ''}>BUILD HERE</button><button class="pb" data-act="cancel">CANCEL</button></div>`;
   } else if (sb && sb.team === 'blue' && BUILDINGS[sb.type].builds) {
     html = `<div class="ptitle">${BUILDINGS[sb.type].name}${sb.progress < 1 ? ' (under construction)' : ''}</div><div class="prow">`;
-    for (const t of BUILDINGS[sb.type].builds) { const U = UNITS[t], n = sb.queue.filter(q => q === t).length; html += `<button class="pb" data-train="${t}" ${sb.progress < 1 || G.credits.blue < unitCost(t, 'blue') ? 'disabled' : ''}><b>${U.name}</b><span>$${unitCost(t, 'blue')}${n ? ' · ×' + n : ''}</span></button>`; }
+    for (const t of BUILDINGS[sb.type].builds) { const U = UNITS[t], n = sb.queue.filter(q => q === t).length; html += `<button class="pb" data-train="${t}" ${sb.progress < 1 || G.credits.blue < unitCost(t, 'blue') ? 'disabled' : ''}><b>${U.name}</b><span>$${unitCost(t, 'blue')}${n ? ' · ×' + n : ''}</span><span class="role">${U.role || ''}</span></button>`; }
     html += `<button class="pb" data-act="army">SELECT ARMY</button></div>`;
   } else if (sb) {
     html = `<div class="ptitle">${BUILDINGS[sb.type].name}</div><div class="prow"><button class="pb" data-act="army">SELECT ARMY</button></div>`;
   } else {
     const hasDozer = own('blue').units.some(u => UNITS[u.type].builder);
-    html = `<div class="ptitle">${su.length ? su.length + ' unit' + (su.length > 1 ? 's' : '') + ' selected' : 'Build (needs a Dozer)'}</div><div class="prow">`;
+    const one = su.length === 1 ? UNITS[su[0].type] : null;
+    const hint = su.some(u => UNITS[u.type].builder) ? (su.find(u => UNITS[u.type].builder).repair ? 'Repairing ' + BUILDINGS[su.find(u => UNITS[u.type].builder).repair.type].name : 'Tap a damaged building to repair it') : one ? one.role : '';
+    html = `<div class="ptitle">${su.length ? (one ? one.name : su.length + ' units selected') : 'Build (needs a Dozer)'}${hint ? ' <span class="hint">· ' + hint + '</span>' : ''}</div><div class="prow">`;
     if (!su.length || su.some(u => UNITS[u.type].builder)) {
       for (const t of ['supply', 'barracks', 'factory', 'turret']) { const B = BUILDINGS[t]; html += `<button class="pb" data-build="${t}" ${!hasDozer || G.credits.blue < bldgCost(t, 'blue') ? 'disabled' : ''}><b>${B.name}</b><span>$${bldgCost(t, 'blue')}</span></button>`; }
     }
@@ -630,7 +677,7 @@ panel && panel.addEventListener('pointerdown', e => {
   else if (b.dataset.act === 'confirm') { const err = placeBuilding(G.placing, G.ghost.x, G.ghost.y, 'blue'); if (err) toast(err, 1.2); else { beep(500, 0.1, 'triangle', 0.05); G.placing = null; G.ghost = null; } }
   else if (b.dataset.act === 'cancel') { G.placing = null; G.ghost = null; }
   else if (b.dataset.act === 'army') selectArmy();
-  else if (b.dataset.act === 'stop') { for (const u of selectedUnits()) { u.order = null; u.target = null; if (UNITS[u.type].harvester) u.state = 'idle'; } }
+  else if (b.dataset.act === 'stop') { for (const u of selectedUnits()) { u.order = null; u.target = null; u.wp = null; if (UNITS[u.type].harvester) u.state = 'idle'; if (UNITS[u.type].builder) { u.build = null; u.repair = null; } } }
   else if (b.dataset.act === 'clear') G.sel = [];
   G.panelDirty = true;
 });
@@ -670,6 +717,11 @@ function tap(sx, sy) {
   const hitB = hitU ? null : G.bldgs.find(b => circleRect(wx, wy, 1, rectOf(b)));
   const su = selectedUnits();
   if (hitU && hitU.team === 'blue') { G.sel = G.sel.includes(hitU.id) && su.length === 1 ? [] : [hitU.id]; beep(700, 0.04, 'triangle', 0.02); }
+  else if (hitB && hitB.team === 'blue' && su.some(u => UNITS[u.type].builder) && (hitB.hp < hitB.maxHp || hitB.progress < 1)) {
+    if (hitB.progress < 1) { const d = su.find(u => UNITS[u.type].builder); d.build = hitB; d.repair = null; d.order = null; d.wp = null; toast('Resuming construction', 1); }
+    else { orderRepair(su, hitB); toast('Repairing ' + BUILDINGS[hitB.type].name + ' · costs $' + Math.round(bldgCost(hitB.type, 'blue') * REPAIR_COST * (1 - hitB.hp / hitB.maxHp)), 1.3); }
+    beep(640, 0.06, 'triangle', 0.03);
+  }
   else if (hitB && hitB.team === 'blue') { G.sel = [hitB.id]; beep(500, 0.04, 'triangle', 0.02); }
   else if ((hitU || hitB) && su.length) { orderAttack(su, hitU || hitB); beep(300, 0.06, 'square', 0.03); }
   else if (su.length) { orderMove(su, wx, wy, true); beep(420, 0.05, 'square', 0.025); }
@@ -733,5 +785,5 @@ document.addEventListener('visibilitychange', () => { last = performance.now(); 
 showMenu();
 requestAnimationFrame(frame);
 
-window.SteelCommand = { G, save, startLevel, update, draw, placeBuilding, queueUnit, orderMove, orderAttack, selectArmy, own, doorSide, UNITS, BUILDINGS, GENERALS, get level() { return L; } };
+window.SteelCommand = { G, save, startLevel, update, draw, placeBuilding, queueUnit, orderMove, orderAttack, selectArmy, orderRepair, own, doorSide, UNITS, BUILDINGS, GENERALS, get level() { return L; } };
 })();

@@ -12,6 +12,7 @@ No install, no build step, no dependencies. One HTML page plus one JavaScript fi
 - **Harvesters** collect supply piles and bring credits back to a Supply Center.
 - Tap a **building** to train units from it. Tap a **unit** to select it, then tap the ground to move (attack-move) or an enemy to attack. **SELECT ARMY** grabs every combat unit.
 - With a **Dozer** alive, pick a building in the panel, tap the map to position it, then **BUILD HERE**. Buildings must be near your base and are constructed over time by the Dozer.
+- The **Dozer repairs** too: select it and tap a damaged building (costs a quarter of the building's price for a full repair). An idle Dozer automatically patches up damaged buildings near it.
 - Every production building has a yellow **exit ramp**. New units leave from that side, which always faces open ground, so you can build right against the map edge.
 - Destroy every enemy building to win. Lose your Command Center and the battle is lost.
 
@@ -25,7 +26,7 @@ No install, no build step, no dependencies. One HTML page plus one JavaScript fi
 
 ## Buildings and units
 
-Command Center (Dozer), Supply Center (Harvester), Barracks (Rifleman, Rocket Trooper), War Factory (Battle Tank, Rocket Buggy), Gun Turret. Rockets are strong against vehicles and weak against infantry; rifles are the reverse.
+Command Center (Dozer), Supply Center (Harvester), Barracks (Rifleman, Rocket Trooper), War Factory (Battle Tank, Rocket Buggy), Gun Turret. Rockets are strong against vehicles and weak against infantry; rifles are the reverse. Rocket Troopers are the bigger infantry with the shoulder launcher and orange markings; they fire slow, heavy rockets, so pick them when tanks show up and Riflemen when it is enemy infantry.
 
 ## Enemy AI
 
