@@ -83,7 +83,7 @@ function bldgCost(type, team) {
 function mkBldg(team, type, x, y, built) {
   const B = BUILDINGS[type];
   let hp = B.hp; if (team === 'blue' && gen() === 'defense') hp = Math.round(hp * 1.25);
-  const b = { id: nextId++, kind: 'bldg', team, type, x, y, w: B.w, h: B.h, hp: built ? hp : 1, maxHp: hp, progress: built ? 1 : 0, queue: [], prodT: 0, cd: 0, hit: 0, dead: false, range: B.range ? B.range * (team === 'blue' && gen() === 'defense' ? 1.3 : 1) : 0, dps: B.dps || 0, aim: 0 };
+  const b = { id: nextId++, kind: 'bldg', team, type, x, y, w: B.w, h: B.h, hp: built ? hp : 1, maxHp: hp, progress: built ? 1 : 0, queue: [], prodT: 0, cd: 0, hit: 0, dead: false, range: B.range ? B.range * (team === 'blue' && gen() === 'defense' ? 1.3 : 1) : 0, dps: B.dps || 0, aim: 0, rally: null };
   G.bldgs.push(b); return b;
 }
 function mkUnit(team, type, x, y) {
@@ -387,7 +387,7 @@ function updateBuilding(b, dt) {
       b.prodT = 0; b.queue.shift();
       const side = doorSide(b), [sx, sy] = SIDES[side], door = sidePoint(b, side, UNITS[type].r + 6), rally = sidePoint(b, side, 64);
       const u = mkUnit(b.team, type, door.x + sy * (Math.random() - 0.5) * 24, door.y + sx * (Math.random() - 0.5) * 24);
-      if (b.team === 'blue') { G.stats.trained++; G.panelDirty = true; orderMove([u], rally.x, rally.y, false); if (UNITS[type].harvester) u.state = 'idle', u.order = null; }
+      if (b.team === 'blue') { G.stats.trained++; G.panelDirty = true; if (b.rally && !UNITS[type].harvester) orderMove([u], b.rally.x, b.rally.y, u.dps > 0); else orderMove([u], rally.x, rally.y, false); if (UNITS[type].harvester) u.state = 'idle', u.order = null; }
       else orderMove([u], 500 + (Math.random() - 0.5) * 200, 470, true);
     }
   }
@@ -519,6 +519,14 @@ function drawBuilding(b) {
   }
   if (G.sel.includes(b.id)) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); roundRect(ctx, rc.x - 4, rc.y - 4, rc.w + 8, rc.h + 8, 10); ctx.stroke(); ctx.setLineDash([]); }
 }
+function drawRally(b) {
+  const r = b.rally, sel = G.sel.includes(b.id), T = TEAM[b.team];
+  if (sel) { const d = doorPoint(b, 10); ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 5]); ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(r.x, r.y); ctx.stroke(); ctx.setLineDash([]); }
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(r.x + 1, r.y + 2, 7, 3, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#e2e8f0'; ctx.fillRect(r.x - 1, r.y - 22, 2, 23);
+  const wave = Math.sin(G.t * 6 + r.x) * 1.5;
+  ctx.fillStyle = sel ? '#fff' : T.main; ctx.beginPath(); ctx.moveTo(r.x + 1, r.y - 22); ctx.lineTo(r.x + 15, r.y - 17 + wave); ctx.lineTo(r.x + 1, r.y - 11); ctx.closePath(); ctx.fill();
+}
 function drawUnit(u) {
   const U = UNITS[u.type], T = TEAM[u.team], hit = u.hit > 0;
   const sel = G.sel.includes(u.id);
@@ -576,6 +584,7 @@ function draw() {
   // build range when placing
   if (G.placing) { ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.setLineDash([5, 5]); ctx.lineWidth = 1.5; for (const b of G.bldgs) if (b.team === 'blue') { ctx.beginPath(); ctx.arc(b.x, b.y, BUILD_RANGE, 0, TAU); ctx.stroke(); } ctx.setLineDash([]); }
   for (const b of G.bldgs) drawBuilding(b);
+  for (const b of G.bldgs) if (b.rally && b.team === 'blue' && !b.dead) drawRally(b);
   // orders
   for (const id of G.sel) { const u = G.units.find(x => x.id === id); if (u && u.order && u.tx != null && u.kind === 'unit') { ctx.strokeStyle = u.order === 'amove' ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1; ctx.setLineDash([3, 5]); ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(u.tx, u.ty); ctx.stroke(); ctx.setLineDash([]); } }
   for (const u of G.units) if (!UNITS[u.type].vehicle) drawUnit(u);
@@ -651,9 +660,10 @@ function renderPanel() {
     const B = BUILDINGS[G.placing], err = G.ghost ? placementError(G.placing, G.ghost.x, G.ghost.y) : 'Tap the map to position';
     html = `<div class="ptitle">Placing ${B.name} · $${bldgCost(G.placing, 'blue')}</div><div class="pmsg">${err || 'Ready to build'}</div><div class="prow"><button class="pb ok" data-act="confirm" ${err ? 'disabled' : ''}>BUILD HERE</button><button class="pb" data-act="cancel">CANCEL</button></div>`;
   } else if (sb && sb.team === 'blue' && BUILDINGS[sb.type].builds) {
-    html = `<div class="ptitle">${BUILDINGS[sb.type].name}${sb.progress < 1 ? ' (under construction)' : ''}</div><div class="prow">`;
+    const canRally = sb.type !== 'supply';
+    html = `<div class="ptitle">${BUILDINGS[sb.type].name}${sb.progress < 1 ? ' (under construction)' : canRally ? ' <span class="hint">· ' + (sb.rally ? 'rally point set' : 'tap the map to set a rally point') + '</span>' : ''}</div><div class="prow">`;
     for (const t of BUILDINGS[sb.type].builds) { const U = UNITS[t], n = sb.queue.filter(q => q === t).length; html += `<button class="pb" data-train="${t}" ${sb.progress < 1 || G.credits.blue < unitCost(t, 'blue') ? 'disabled' : ''}><b>${U.name}</b><span>$${unitCost(t, 'blue')}${n ? ' · ×' + n : ''}</span><span class="role">${U.role || ''}</span></button>`; }
-    html += `<button class="pb" data-act="army">SELECT ARMY</button></div>`;
+    html += `<button class="pb" data-act="army">SELECT ARMY</button>${sb.rally ? '<button class="pb" data-act="rally-clear">CLEAR RALLY</button>' : ''}<button class="pb" data-act="clear">DESELECT</button></div>`;
   } else if (sb) {
     html = `<div class="ptitle">${BUILDINGS[sb.type].name}</div><div class="prow"><button class="pb" data-act="army">SELECT ARMY</button></div>`;
   } else {
@@ -679,6 +689,7 @@ panel && panel.addEventListener('pointerdown', e => {
   else if (b.dataset.act === 'army') selectArmy();
   else if (b.dataset.act === 'stop') { for (const u of selectedUnits()) { u.order = null; u.target = null; u.wp = null; if (UNITS[u.type].harvester) u.state = 'idle'; if (UNITS[u.type].builder) { u.build = null; u.repair = null; } } }
   else if (b.dataset.act === 'clear') G.sel = [];
+  else if (b.dataset.act === 'rally-clear') { const sb = selected().find(x => x.kind === 'bldg'); if (sb) sb.rally = null; }
   G.panelDirty = true;
 });
 
@@ -715,16 +726,17 @@ function tap(sx, sy) {
   let hitU = null, hd = 22;
   for (const u of G.units) { const d = dist(u, { x: wx, y: wy }); if (d < u.r + 10 && d < hd) { hd = d; hitU = u; } }
   const hitB = hitU ? null : G.bldgs.find(b => circleRect(wx, wy, 1, rectOf(b)));
-  const su = selectedUnits();
+  const su = selectedUnits(), sb = selected().find(e => e.kind === 'bldg' && e.team === 'blue' && BUILDINGS[e.type].builds && e.type !== 'supply');
   if (hitU && hitU.team === 'blue') { G.sel = G.sel.includes(hitU.id) && su.length === 1 ? [] : [hitU.id]; beep(700, 0.04, 'triangle', 0.02); }
   else if (hitB && hitB.team === 'blue' && su.some(u => UNITS[u.type].builder) && (hitB.hp < hitB.maxHp || hitB.progress < 1)) {
     if (hitB.progress < 1) { const d = su.find(u => UNITS[u.type].builder); d.build = hitB; d.repair = null; d.order = null; d.wp = null; toast('Resuming construction', 1); }
     else { orderRepair(su, hitB); toast('Repairing ' + BUILDINGS[hitB.type].name + ' · costs $' + Math.round(bldgCost(hitB.type, 'blue') * REPAIR_COST * (1 - hitB.hp / hitB.maxHp)), 1.3); }
     beep(640, 0.06, 'triangle', 0.03);
   }
-  else if (hitB && hitB.team === 'blue') { G.sel = [hitB.id]; beep(500, 0.04, 'triangle', 0.02); }
+  else if (hitB && hitB.team === 'blue') { G.sel = G.sel.includes(hitB.id) ? [] : [hitB.id]; beep(500, 0.04, 'triangle', 0.02); }
   else if ((hitU || hitB) && su.length) { orderAttack(su, hitU || hitB); beep(300, 0.06, 'square', 0.03); }
   else if (su.length) { orderMove(su, wx, wy, true); beep(420, 0.05, 'square', 0.025); }
+  else if (sb && !hitU && !hitB) { sb.rally = { x: clamp(wx, EDGE, MW - EDGE), y: clamp(wy, EDGE, MH - EDGE) }; toast('Rally point set', 0.8); beep(560, 0.06, 'triangle', 0.03); }
   else G.sel = [];
   G.panelDirty = true;
 }

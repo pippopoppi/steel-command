@@ -13,6 +13,7 @@ No install, no build step, no dependencies. One HTML page plus one JavaScript fi
 - Tap a **building** to train units from it. Tap a **unit** to select it, then tap the ground to move (attack-move) or an enemy to attack. **SELECT ARMY** grabs every combat unit.
 - With a **Dozer** alive, pick a building in the panel, tap the map to position it, then **BUILD HERE**. Buildings must be near your base and are constructed over time by the Dozer.
 - The **Dozer repairs** too: select it and tap a damaged building (costs a quarter of the building's price for a full repair). An idle Dozer automatically patches up damaged buildings near it.
+- **Rally points:** select a Barracks, War Factory or Command Center and tap the map to plant a flag. New units attack-move to it. Tap the building again or use **DESELECT** to stop, **CLEAR RALLY** to remove the flag.
 - Every production building has a yellow **exit ramp**. New units leave from that side, which always faces open ground, so you can build right against the map edge.
 - Destroy every enemy building to win. Lose your Command Center and the battle is lost.
 
