@@ -15,7 +15,7 @@ const BUILD_RANGE = 260;
 const BUILDINGS = {
   cc:       { name: 'Command Center', w: 100, h: 84, hp: 3200, cost: 0,    time: 0,  builds: ['dozer'], color: '#64748b' },
   supply:   { name: 'Supply Center',  w: 84,  h: 66, hp: 1500, cost: 800,  time: 12, builds: ['harvester'], color: '#ca8a04' },
-  barracks: { name: 'Barracks',       w: 76,  h: 66, hp: 1200, cost: 500,  time: 10, builds: ['rifle', 'rocket'], color: '#16a34a' },
+  barracks: { name: 'Barracks',       w: 76,  h: 66, hp: 1200, cost: 500,  time: 10, builds: ['rifle', 'rocket', 'medic'], color: '#16a34a' },
   factory:  { name: 'War Factory',    w: 100, h: 76, hp: 2000, cost: 1200, time: 16, builds: ['tank', 'buggy'], color: '#7c3aed' },
   turret:   { name: 'Gun Turret',     w: 44,  h: 44, hp: 900,  cost: 600,  time: 8,  range: 210, dps: 36, aa: true, color: '#dc2626' },
   airfield: { name: 'Airfield',       w: 120, h: 80, hp: 1600, cost: 1500, time: 18, builds: ['heli', 'jet'], color: '#0e7490' },
@@ -24,6 +24,7 @@ const UNITS = {
   dozer:     { name: 'Dozer',          cost: 600, hp: 400, speed: 70,  time: 8,  r: 11, builder: true, vehicle: true, role: 'builds & repairs' },
   harvester: { name: 'Harvester',      cost: 800, hp: 600, speed: 85,  time: 10, r: 12, harvester: true, vehicle: true, cargo: 150, role: 'collects supplies' },
   rifle:     { name: 'Rifleman',       cost: 150, hp: 110, speed: 60,  time: 4,  r: 6,  range: 115, dps: 14, vsVeh: 0.35, role: 'anti-infantry' },
+  medic:     { name: 'Medic',          cost: 400, hp: 120, speed: 62,  time: 6,  r: 6,  heal: true, role: 'heals troops, repairs vehicles' },
   rocket:    { name: 'Rocket Trooper', cost: 300, hp: 100, speed: 55,  time: 6,  r: 6,  range: 150, dps: 24, vsVeh: 1.6, vsInf: 0.45, aa: true, role: 'anti-vehicle, anti-air' },
   tank:      { name: 'Battle Tank',    cost: 800, hp: 720, speed: 75,  time: 10, r: 13, range: 140, dps: 36, vsInf: 0.6, vehicle: true, role: 'all-round armor' },
   buggy:     { name: 'Rocket Buggy',   cost: 600, hp: 300, speed: 125, time: 7,  r: 10, range: 165, dps: 26, vsVeh: 1.3, vsInf: 0.5, vehicle: true, aa: true, role: 'fast anti-vehicle, anti-air' },
@@ -32,6 +33,9 @@ const UNITS = {
   jet:       { name: 'Strike Jet',     cost: 1400, hp: 350, speed: 230, time: 12, r: 11, range: 110, dps: 150, vsVeh: 1.5, vsInf: 0.5, vehicle: true, air: true, ammo: 4, role: 'air, bombs vehicles' },
 };
 const REARM_TIME = 3;    // seconds on the airfield to reload a jet
+const HEAL_RANGE = 240;  // a medic with nothing to do looks for patients this far away
+const HEAL_INF = 28, HEAL_VEH = 45;   // hit points per second for infantry / vehicles
+const LONG_PRESS = 0.35; // seconds of holding still before a drag becomes a selection box
 const GENERALS = {
   armor:    { name: 'General Steele',  title: 'Armor',    desc: 'Tanks and buggies have +25% hull. War Factory costs 20% less.', icon: '🛡️' },
   infantry: { name: 'General Reyes',   title: 'Infantry', desc: 'Infantry costs 30% less and trains twice as fast.', icon: '🪖' },
@@ -164,7 +168,7 @@ function startLevel(n) {
   L = { n };
   nextId = 1;
   G.state = 'play'; G.t = 0; G.units = []; G.bldgs = []; G.piles = []; G.shots = []; G.parts = []; G.floats = []; G.toasts = [];
-  G.sel = []; G.placing = null; G.ghost = null; G.lost = false; G.won = false; G.shake = 0;
+  G.sel = []; G.placing = null; G.ghost = null; G.lost = false; G.won = false; G.shake = 0; G.boxNext = false;
   G.stats = { built: 0, trained: 0, kills: 0, lost: 0 };
   G.credits = { blue: 2500, red: 400 + n * 200 };
   G.ai = { t: 0, waveT: 150 - Math.min(60, n * 5), mix: 0, income: 0.5 + n * 0.3, waveSize: 6 + n * 2 };
@@ -205,6 +209,7 @@ function orderMove(units, x, y, attack) {
   });
 }
 function orderAttack(units, target) { for (const u of units) { u.wp = null; if (u.dps > 0 && canHit(u, target)) { u.order = 'attack'; u.target = target; } else { u.order = 'move'; u.tx = target.x; u.ty = target.y; } } }
+function orderHeal(units, patient) { for (const u of units) if (UNITS[u.type].heal) { u.order = null; u.wp = null; u.target = patient; } }
 function selected() { return G.sel.map(id => G.units.find(u => u.id === id) || G.bldgs.find(b => b.id === id)).filter(e => e && !e.dead); }
 function selectedUnits() { return selected().filter(e => e.kind === 'unit'); }
 function selectArmy() { G.sel = own('blue').units.filter(u => u.dps > 0).map(u => u.id); G.panelDirty = true; }
@@ -374,6 +379,25 @@ function updateUnit(u, dt) {
     }
     return;
   }
+  if (U.heal) {
+    if (u.order === 'move' || u.order === 'amove') { if (moveToward(u, u.tx, u.ty, dt, 4)) u.order = null; if (u.order === 'move') return; }
+    // patient: the most damaged ground unit nearby (an explicit target first, if one was tapped)
+    if (u.target && (u.target.dead || u.target.kind !== 'unit' || u.target.team !== team || u.target.hp >= u.target.maxHp || u.target.air)) u.target = null;
+    if (!u.target) {
+      let best = null, bs = 0;
+      for (const p of G.units) { if (p.dead || p.team !== team || p === u || p.air || p.hp >= p.maxHp * 0.98) continue; const d = dist(p, u); if (d > HEAL_RANGE) continue; const sc = (1 - p.hp / p.maxHp) * 300 - d; if (!best || sc > bs) { best = p; bs = sc; } }
+      u.target = best;
+    }
+    if (!u.target) return;
+    const p = u.target;
+    if (dist(u, p) > p.r + u.r + 6) { moveToward(u, p.x, p.y, dt, p.r + u.r + 4); return; }
+    u.face = Math.atan2(p.y - u.y, p.x - u.x);
+    const veh = UNITS[p.type].vehicle;
+    p.hp = Math.min(p.maxHp, p.hp + (veh ? HEAL_VEH : HEAL_INF) * dt);
+    if (Math.random() < dt * 10) G.parts.push({ x: p.x + (Math.random() - 0.5) * 12, y: p.y - 4 - Math.random() * 8, vx: 0, vy: -28, r: 2, life: 0.5, color: veh ? '#fde047' : '#4ade80', cross: !veh });
+    if (p.hp >= p.maxHp) u.target = null;
+    return;
+  }
   // jets: out of bombs -> fly home to the nearest airfield and reload
   if (U.ammo) {
     if (u.ammo <= 0 || u.state === 'rearm') {
@@ -448,7 +472,7 @@ function updateAI(dt) {
     ai.mix++;
     if (airfield.length && ai.mix % 4 === 1) queueUnit(airfield[0], Math.random() < 0.6 ? 'heli' : 'jet');
     else if (factory.length && ai.mix % 3 === 0) queueUnit(factory[0], Math.random() < 0.7 ? 'tank' : 'buggy');
-    else if (barracks.length) queueUnit(barracks[ai.mix % barracks.length], Math.random() < 0.55 ? 'rifle' : 'rocket');
+    else if (barracks.length) queueUnit(barracks[ai.mix % barracks.length], L.n >= 3 && ai.mix % 5 === 2 ? 'medic' : Math.random() < 0.55 ? 'rifle' : 'rocket');
   }
   if (ai.waveT <= 0 || army.filter(u => !u.order).length >= ai.waveSize) {
     const idle = army.filter(u => !u.order || u.order === 'amove');
@@ -618,14 +642,18 @@ function drawUnit(u) {
     const k = Math.sin(G.t * 10 + u.ph) * (u.order || u.target ? 2 : 0);
     ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(1, 6, 6, 3, 0, 0, TAU); ctx.fill();
     ctx.fillStyle = T.dark; ctx.fillRect(-4, 2 + k, 3, 5); ctx.fillRect(1, 2 - k, 3, 5);
-    const rk = u.type === 'rocket';
+    const rk = u.type === 'rocket', md = u.type === 'medic';
     if (rk) { ctx.scale(1.2, 1.2); ctx.fillStyle = '#374151'; roundRect(ctx, -7, -4, 14, 9, 3); ctx.fill(); } // bigger silhouette + backpack
-    ctx.fillStyle = hit ? '#fff' : T.main; roundRect(ctx, -5, -5, 10, 9, 3); ctx.fill();
+    if (md) { ctx.fillStyle = '#7f1d1d'; roundRect(ctx, -7, -4, 14, 9, 3); ctx.fill(); }                          // medic's red kit bag
+    ctx.fillStyle = hit ? '#fff' : (md ? '#f8fafc' : T.main); roundRect(ctx, -5, -5, 10, 9, 3); ctx.fill();
     if (rk) { ctx.fillStyle = '#fb923c'; ctx.fillRect(-5, -2, 10, 2); }                  // orange chest stripe
-    ctx.fillStyle = hit ? '#fff' : (rk ? '#1e293b' : T.dark); ctx.beginPath(); ctx.arc(0, -8, 4, 0, TAU); ctx.fill();
+    if (md) { ctx.fillStyle = '#dc2626'; ctx.fillRect(-1, -4, 2, 7); ctx.fillRect(-3.5, -1.5, 7, 2); ctx.fillStyle = T.main; ctx.fillRect(-5, 2, 10, 2); }   // red cross + team stripe
+    ctx.fillStyle = hit ? '#fff' : (rk ? '#1e293b' : md ? '#f8fafc' : T.dark); ctx.beginPath(); ctx.arc(0, -8, 4, 0, TAU); ctx.fill();
     if (rk) { ctx.fillStyle = '#fb923c'; ctx.fillRect(-4, -9, 8, 1.5); }                 // orange helmet band
+    if (md) { ctx.fillStyle = '#dc2626'; ctx.fillRect(-0.75, -10.5, 1.5, 4); ctx.fillRect(-2, -9.25, 4, 1.5); }   // cross on the helmet
     ctx.save(); ctx.rotate(u.face);
     if (rk) { ctx.fillStyle = '#4b5563'; ctx.fillRect(-4, -4, 16, 4); ctx.fillStyle = '#fb923c'; ctx.fillRect(10, -4, 3, 4); } // shoulder launcher
+    else if (md) { ctx.fillStyle = '#9ca3af'; ctx.fillRect(3, -2, 6, 4); }                                             // wrench / toolkit
     else { ctx.fillStyle = '#111827'; ctx.fillRect(2, -1, 9, 2); }
     ctx.restore();
   }
@@ -669,7 +697,7 @@ function draw() {
     }
     ctx.strokeStyle = s.heavy ? 'rgba(253,224,71,0.9)' : (s.team === 'blue' ? 'rgba(191,219,254,0.9)' : 'rgba(254,202,202,0.9)'); ctx.lineWidth = s.heavy ? 3 : 1.2; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.tx, s.ty); ctx.stroke(); if (s.heavy) { ctx.fillStyle = '#fb923c'; ctx.beginPath(); ctx.arc(s.tx, s.ty, 5 * (s.life / 0.25), 0, TAU); ctx.fill(); }
   }
-  for (const p of G.parts) { ctx.globalAlpha = clamp(p.life * 2, 0, 1); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill(); }
+  for (const p of G.parts) { ctx.globalAlpha = clamp(p.life * 2, 0, 1); ctx.fillStyle = p.color; if (p.cross) { ctx.fillRect(p.x - 1, p.y - 3, 2, 6); ctx.fillRect(p.x - 3, p.y - 1, 6, 2); } else { ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill(); } }
   ctx.globalAlpha = 1;
   for (const u of G.units) if (UNITS[u.type].air) drawUnit(u);   // aircraft above everything on the ground
   for (const f of G.floats) { ctx.globalAlpha = clamp(f.life, 0, 1); ctx.fillStyle = f.color; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(f.text, f.x, f.y); }
@@ -683,6 +711,9 @@ function draw() {
   }
   ctx.restore();
 
+  // selection box (screen space)
+  if (press && press.box) { const x = Math.min(press.x, press.bx), y = Math.min(press.y, press.by), w = Math.abs(press.bx - press.x), h = Math.abs(press.by - press.y); ctx.fillStyle = 'rgba(147,197,253,0.2)'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = '#93c5fd'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]); }
+  else if (G.boxNext) { ctx.fillStyle = 'rgba(2,6,23,0.7)'; roundRect(ctx, W / 2 - 95, VIEW_H - 30, 190, 24, 8); ctx.fill(); ctx.fillStyle = '#93c5fd'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Drag a box around your troops', W / 2, VIEW_H - 18); }
   // HUD
   ctx.fillStyle = 'rgba(2,6,23,0.7)'; roundRect(ctx, 8, 8, 236, 34, 10); ctx.fill();
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
@@ -710,6 +741,7 @@ function draw() {
   // selection summary
   const su = selectedUnits();
   if (su.length) { ctx.fillStyle = 'rgba(2,6,23,0.7)'; roundRect(ctx, 8, VIEW_H - 30, 170, 24, 8); ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillText(su.length + ' selected · tap ground to move, enemy to attack', 16, VIEW_H - 18); }
+  else if (!G.boxNext && !G.placing && G.t < 20) { ctx.fillStyle = 'rgba(2,6,23,0.55)'; roundRect(ctx, 8, VIEW_H - 30, 190, 24, 8); ctx.fill(); ctx.fillStyle = '#cbd5e1'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('Hold, then drag to box-select troops', 16, VIEW_H - 18); }
 }
 function placementError(type, x, y) {
   const B = BUILDINGS[type], rc = { x: x - B.w / 2, y: y - B.h / 2, w: B.w, h: B.h };
@@ -747,7 +779,7 @@ function renderPanel() {
       for (const t of ['supply', 'barracks', 'factory', 'turret', 'airfield']) { const B = BUILDINGS[t]; html += `<button class="pb" data-build="${t}" ${!hasDozer || G.credits.blue < bldgCost(t, 'blue') ? 'disabled' : ''}><b>${B.name}</b><span>$${bldgCost(t, 'blue')}</span></button>`; }
     }
     if (su.length) html += `<button class="pb" data-act="stop">STOP</button>`;
-    html += `<button class="pb" data-act="army">SELECT ARMY</button>${su.length ? '<button class="pb" data-act="clear">DESELECT</button>' : ''}</div>`;
+    html += `<button class="pb" data-act="army">SELECT ARMY</button><button class="pb${G.boxNext ? ' ok' : ''}" data-act="box">BOX SELECT</button>${su.length ? '<button class="pb" data-act="clear">DESELECT</button>' : ''}</div>`;
   }
   panel.innerHTML = html;
 }
@@ -759,6 +791,7 @@ panel && panel.addEventListener('pointerdown', e => {
   else if (b.dataset.act === 'confirm') { const err = placeBuilding(G.placing, G.ghost.x, G.ghost.y, 'blue'); if (err) toast(err, 1.2); else { beep(500, 0.1, 'triangle', 0.05); G.placing = null; G.ghost = null; } }
   else if (b.dataset.act === 'cancel') { G.placing = null; G.ghost = null; }
   else if (b.dataset.act === 'army') selectArmy();
+  else if (b.dataset.act === 'box') { G.boxNext = !G.boxNext; if (G.boxNext) toast('Now drag a box on the map', 1.2); }
   else if (b.dataset.act === 'stop') { for (const u of selectedUnits()) { u.order = null; u.target = null; u.wp = null; if (UNITS[u.type].harvester) u.state = 'idle'; if (UNITS[u.type].builder) { u.build = null; u.repair = null; } } }
   else if (b.dataset.act === 'clear') G.sel = [];
   else if (b.dataset.act === 'rally-clear') { const sb = selected().find(x => x.kind === 'bldg'); if (sb) sb.rally = null; }
@@ -768,25 +801,39 @@ panel && panel.addEventListener('pointerdown', e => {
 // ---------- input ----------
 let press = null;
 function pointerPos(e) { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }; }
+function startBox() { press.box = true; press.bx = press.x; press.by = press.y; beep(880, 0.05, 'triangle', 0.03); G.boxNext = false; G.panelDirty = true; }
+function finishBox() {
+  const x0 = Math.min(press.x, press.bx) + G.cam.x, x1 = Math.max(press.x, press.bx) + G.cam.x, y0 = Math.min(press.y, press.by) + G.cam.y, y1 = Math.max(press.y, press.by) + G.cam.y;
+  const inside = G.units.filter(u => !u.dead && u.team === 'blue' && u.x >= x0 && u.x <= x1 && u.y >= y0 && u.y <= y1);
+  const troops = inside.filter(u => u.dps > 0 || UNITS[u.type].heal);     // prefer fighters and medics over harvesters/dozers
+  const pick = troops.length ? troops : inside;
+  if (pick.length) { G.sel = pick.map(u => u.id); beep(700, 0.06, 'triangle', 0.03); toast(pick.length + ' selected', 0.8); }
+  G.panelDirty = true;
+}
 canvas.addEventListener('pointerdown', e => {
   if (!AC) beep(1, 0.01, 'sine', 0.0001);
   if (G.state !== 'play') return;
-  const p = pointerPos(e); press = { x: p.x, y: p.y, cx: G.cam.x, cy: G.cam.y, moved: false, id: e.pointerId };
+  const p = pointerPos(e); press = { x: p.x, y: p.y, cx: G.cam.x, cy: G.cam.y, moved: false, id: e.pointerId, t: performance.now(), box: false, bx: p.x, by: p.y };
+  if (p.y <= VIEW_H && !G.placing && (G.boxNext || e.shiftKey || e.button === 2)) startBox();
   try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
 });
 canvas.addEventListener('pointermove', e => {
   if (!press || G.state !== 'play') return;
   const p = pointerPos(e);
+  if (press.box) { press.bx = p.x; press.by = clamp(p.y, 0, VIEW_H); press.moved = true; return; }
   if (!press.moved && Math.hypot(p.x - press.x, p.y - press.y) > 8) press.moved = true;
   if (press.moved) { G.cam.x = clamp(press.cx - (p.x - press.x), 0, MW - W); G.cam.y = clamp(press.cy - (p.y - press.y), 0, MH - VIEW_H); }
 });
 canvas.addEventListener('pointerup', e => {
   if (!press) return;
-  const p = pointerPos(e), moved = press.moved; press = null;
+  const p = pointerPos(e), moved = press.moved, box = press.box;
+  if (box && G.state === 'play') { if (Math.abs(press.bx - press.x) > 6 && Math.abs(press.by - press.y) > 6) finishBox(); press = null; return; }
+  press = null;
   if (moved || G.state !== 'play') return;
   tap(p.x, p.y);
 });
 canvas.addEventListener('pointercancel', () => { press = null; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 function tap(sx, sy) {
   const mm = { x: W - 108, y: 8, w: 100, h: 150 };
   if (sx >= mm.x && sx <= mm.x + mm.w && sy >= mm.y && sy <= mm.y + mm.h) {
@@ -799,7 +846,8 @@ function tap(sx, sy) {
   for (const u of G.units) { const d = dist(u, { x: wx, y: wy }); if (d < u.r + 10 && d < hd) { hd = d; hitU = u; } }
   const hitB = hitU ? null : G.bldgs.find(b => circleRect(wx, wy, 1, rectOf(b)));
   const su = selectedUnits(), sb = selected().find(e => e.kind === 'bldg' && e.team === 'blue' && BUILDINGS[e.type].builds && e.type !== 'supply');
-  if (hitU && hitU.team === 'blue') { G.sel = G.sel.includes(hitU.id) && su.length === 1 ? [] : [hitU.id]; beep(700, 0.04, 'triangle', 0.02); }
+  if (hitU && hitU.team === 'blue' && su.some(u => UNITS[u.type].heal) && hitU.hp < hitU.maxHp && !G.sel.includes(hitU.id)) { orderHeal(su, hitU); toast('Medic: treating ' + UNITS[hitU.type].name, 1); beep(640, 0.06, 'triangle', 0.03); }
+  else if (hitU && hitU.team === 'blue') { G.sel = G.sel.includes(hitU.id) && su.length === 1 ? [] : [hitU.id]; beep(700, 0.04, 'triangle', 0.02); }
   else if (hitB && hitB.team === 'blue' && su.some(u => UNITS[u.type].builder) && (hitB.hp < hitB.maxHp || hitB.progress < 1)) {
     if (hitB.progress < 1) { const d = su.find(u => UNITS[u.type].builder); d.build = hitB; d.repair = null; d.order = null; d.wp = null; toast('Resuming construction', 1); }
     else { orderRepair(su, hitB); toast('Repairing ' + BUILDINGS[hitB.type].name + ' · costs $' + Math.round(bldgCost(hitB.type, 'blue') * REPAIR_COST * (1 - hitB.hp / hitB.maxHp)), 1.3); }
@@ -859,6 +907,7 @@ function frame(now) {
   if (dt > 0.05) dt = 0.05;
   if (G.state === 'play') {
     update(dt);
+    if (press && !press.moved && !press.box && !G.placing && press.y <= VIEW_H && now - press.t > LONG_PRESS * 1000) startBox();
     panelT += dt;
     if (G.panelDirty || panelT > 0.5) { panelT = 0; renderPanel(); }
   }
@@ -869,5 +918,5 @@ document.addEventListener('visibilitychange', () => { last = performance.now(); 
 showMenu();
 requestAnimationFrame(frame);
 
-window.SteelCommand = { G, save, startLevel, update, draw, placeBuilding, queueUnit, orderMove, orderAttack, selectArmy, orderRepair, own, doorSide, UNITS, BUILDINGS, GENERALS, get level() { return L; } };
+window.SteelCommand = { G, save, startLevel, update, draw, placeBuilding, queueUnit, orderMove, orderAttack, orderHeal, selectArmy, orderRepair, own, doorSide, UNITS, BUILDINGS, GENERALS, get level() { return L; } };
 })();

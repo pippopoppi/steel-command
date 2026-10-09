@@ -11,6 +11,8 @@ No install, no build step, no dependencies. One HTML page plus one JavaScript fi
 - **Drag** the map to scroll, or tap the **minimap**. Your base is at the bottom, the enemy at the top.
 - **Harvesters** collect supply piles and bring credits back to a Supply Center.
 - Tap a **building** to train units from it. Tap a **unit** to select it, then tap the ground to move (attack-move) or an enemy to attack. **SELECT ARMY** grabs every combat unit.
+- **Box select:** hold a finger still for a moment, then drag a rectangle around your troops. On a computer, Shift-drag or right-drag does the same. The **BOX SELECT** button arms the next drag too.
+- **Medic** ($400, Barracks): no weapon, but heals wounded infantry and repairs damaged tanks, buggies, harvesters and dozers for free. An idle Medic walks to the most damaged unit nearby on its own; select a Medic and tap a damaged unit to send it there.
 - With a **Dozer** alive, pick a building in the panel, tap the map to position it, then **BUILD HERE**. Buildings must be near your base and are constructed over time by the Dozer.
 - The **Dozer repairs** too: select it and tap a damaged building (costs a quarter of the building's price for a full repair). An idle Dozer automatically patches up damaged buildings near it.
 - **Rally points:** select a Barracks, War Factory or Command Center and tap the map to plant a flag. New units attack-move to it. Tap the building again or use **DESELECT** to stop, **CLEAR RALLY** to remove the flag.
@@ -30,7 +32,7 @@ No install, no build step, no dependencies. One HTML page plus one JavaScript fi
 
 ## Buildings and units
 
-Command Center (Dozer), Supply Center (Harvester), Barracks (Rifleman, Rocket Trooper), War Factory (Battle Tank, Rocket Buggy), Gun Turret, Airfield (Gunship, Strike Jet). Rockets are strong against vehicles and weak against infantry; rifles are the reverse. Rocket Troopers are the bigger infantry with the shoulder launcher and orange markings; they fire slow, heavy rockets, so pick them when tanks show up and Riflemen when it is enemy infantry.
+Command Center (Dozer), Supply Center (Harvester), Barracks (Rifleman, Rocket Trooper, Medic), War Factory (Battle Tank, Rocket Buggy), Gun Turret, Airfield (Gunship, Strike Jet). Rockets are strong against vehicles and weak against infantry; rifles are the reverse. Rocket Troopers are the bigger infantry with the shoulder launcher and orange markings; they fire slow, heavy rockets, so pick them when tanks show up and Riflemen when it is enemy infantry.
 
 ## Enemy AI
 
