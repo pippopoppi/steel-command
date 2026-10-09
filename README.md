@@ -15,6 +15,9 @@ No install, no build step, no dependencies. One HTML page plus one JavaScript fi
 - The **Dozer repairs** too: select it and tap a damaged building (costs a quarter of the building's price for a full repair). An idle Dozer automatically patches up damaged buildings near it.
 - **Rally points:** select a Barracks, War Factory or Command Center and tap the map to plant a flag. New units attack-move to it. Tap the building again or use **DESELECT** to stop, **CLEAR RALLY** to remove the flag.
 - Every production building has a yellow **exit ramp**. New units leave from that side, which always faces open ground, so you can build right against the map edge.
+- **Airfield** ($1500) builds aircraft. Aircraft fly straight over buildings and units and ignore the ground. Only Rocket Troopers, Rocket Buggies, Gun Turrets and Gunships can shoot them; Riflemen and tanks cannot.
+  - **Gunship** ($1000): a helicopter with rockets, strong against infantry, fires continuously.
+  - **Strike Jet** ($1400): fast, carries four bombs that hit vehicles and buildings hard, then flies back to the Airfield to rearm (three seconds on the runway). No Airfield, no bombs.
 - Destroy every enemy building to win. Lose your Command Center and the battle is lost.
 
 ## Generals
@@ -27,11 +30,11 @@ No install, no build step, no dependencies. One HTML page plus one JavaScript fi
 
 ## Buildings and units
 
-Command Center (Dozer), Supply Center (Harvester), Barracks (Rifleman, Rocket Trooper), War Factory (Battle Tank, Rocket Buggy), Gun Turret. Rockets are strong against vehicles and weak against infantry; rifles are the reverse. Rocket Troopers are the bigger infantry with the shoulder launcher and orange markings; they fire slow, heavy rockets, so pick them when tanks show up and Riflemen when it is enemy infantry.
+Command Center (Dozer), Supply Center (Harvester), Barracks (Rifleman, Rocket Trooper), War Factory (Battle Tank, Rocket Buggy), Gun Turret, Airfield (Gunship, Strike Jet). Rockets are strong against vehicles and weak against infantry; rifles are the reverse. Rocket Troopers are the bigger infantry with the shoulder launcher and orange markings; they fire slow, heavy rockets, so pick them when tanks show up and Riflemen when it is enemy infantry.
 
 ## Enemy AI
 
-The enemy commander harvests, produces a mix of infantry and vehicles, and sends attack waves that grow with each level. Higher levels start it with a War Factory, turrets, and a second Barracks.
+The enemy commander harvests, produces a mix of infantry and vehicles, and sends attack waves that grow with each level. Higher levels start it with a War Factory, turrets, an Airfield with gunships and jets from level 4, and a second Barracks.
 
 ## Running locally
 

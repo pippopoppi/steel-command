@@ -17,16 +17,21 @@ const BUILDINGS = {
   supply:   { name: 'Supply Center',  w: 84,  h: 66, hp: 1500, cost: 800,  time: 12, builds: ['harvester'], color: '#ca8a04' },
   barracks: { name: 'Barracks',       w: 76,  h: 66, hp: 1200, cost: 500,  time: 10, builds: ['rifle', 'rocket'], color: '#16a34a' },
   factory:  { name: 'War Factory',    w: 100, h: 76, hp: 2000, cost: 1200, time: 16, builds: ['tank', 'buggy'], color: '#7c3aed' },
-  turret:   { name: 'Gun Turret',     w: 44,  h: 44, hp: 900,  cost: 600,  time: 8,  range: 210, dps: 36, color: '#dc2626' },
+  turret:   { name: 'Gun Turret',     w: 44,  h: 44, hp: 900,  cost: 600,  time: 8,  range: 210, dps: 36, aa: true, color: '#dc2626' },
+  airfield: { name: 'Airfield',       w: 120, h: 80, hp: 1600, cost: 1500, time: 18, builds: ['heli', 'jet'], color: '#0e7490' },
 };
 const UNITS = {
   dozer:     { name: 'Dozer',          cost: 600, hp: 400, speed: 70,  time: 8,  r: 11, builder: true, vehicle: true, role: 'builds & repairs' },
   harvester: { name: 'Harvester',      cost: 800, hp: 600, speed: 85,  time: 10, r: 12, harvester: true, vehicle: true, cargo: 150, role: 'collects supplies' },
   rifle:     { name: 'Rifleman',       cost: 150, hp: 110, speed: 60,  time: 4,  r: 6,  range: 115, dps: 14, vsVeh: 0.35, role: 'anti-infantry' },
-  rocket:    { name: 'Rocket Trooper', cost: 300, hp: 100, speed: 55,  time: 6,  r: 6,  range: 150, dps: 24, vsVeh: 1.6, vsInf: 0.45, role: 'anti-vehicle' },
+  rocket:    { name: 'Rocket Trooper', cost: 300, hp: 100, speed: 55,  time: 6,  r: 6,  range: 150, dps: 24, vsVeh: 1.6, vsInf: 0.45, aa: true, role: 'anti-vehicle, anti-air' },
   tank:      { name: 'Battle Tank',    cost: 800, hp: 720, speed: 75,  time: 10, r: 13, range: 140, dps: 36, vsInf: 0.6, vehicle: true, role: 'all-round armor' },
-  buggy:     { name: 'Rocket Buggy',   cost: 600, hp: 300, speed: 125, time: 7,  r: 10, range: 165, dps: 26, vsVeh: 1.3, vsInf: 0.5, vehicle: true, role: 'fast anti-vehicle' },
+  buggy:     { name: 'Rocket Buggy',   cost: 600, hp: 300, speed: 125, time: 7,  r: 10, range: 165, dps: 26, vsVeh: 1.3, vsInf: 0.5, vehicle: true, aa: true, role: 'fast anti-vehicle, anti-air' },
+  // aircraft fly over everything; only rockets, buggies, turrets and gunships can hit them
+  heli:      { name: 'Gunship',        cost: 1000, hp: 450, speed: 115, time: 10, r: 11, range: 150, dps: 30, vsInf: 1.4, vsVeh: 0.8, vehicle: true, air: true, aa: true, role: 'air, anti-infantry' },
+  jet:       { name: 'Strike Jet',     cost: 1400, hp: 350, speed: 230, time: 12, r: 11, range: 110, dps: 150, vsVeh: 1.5, vsInf: 0.5, vehicle: true, air: true, ammo: 4, role: 'air, bombs vehicles' },
 };
+const REARM_TIME = 3;    // seconds on the airfield to reload a jet
 const GENERALS = {
   armor:    { name: 'General Steele',  title: 'Armor',    desc: 'Tanks and buggies have +25% hull. War Factory costs 20% less.', icon: '🛡️' },
   infantry: { name: 'General Reyes',   title: 'Infantry', desc: 'Infantry costs 30% less and trains twice as fast.', icon: '🪖' },
@@ -90,7 +95,8 @@ function mkUnit(team, type, x, y) {
   const U = UNITS[type];
   let hp = U.hp; if (team === 'blue' && gen() === 'armor' && U.vehicle && !U.builder && !U.harvester) hp = Math.round(hp * 1.25);
   const u = { id: nextId++, kind: 'unit', team, type, x, y, hp, maxHp: hp, r: U.r, speed: U.speed, range: U.range || 0, dps: U.dps || 0,
-    order: null, tx: null, ty: null, target: null, cd: Math.random() * 0.5, hit: 0, dead: false, cargo: 0, state: 'idle', pile: null, build: null, repair: null, face: -Math.PI / 2, ph: Math.random() * TAU, wp: null, stuckT: 0 };
+    order: null, tx: null, ty: null, target: null, cd: Math.random() * 0.5, hit: 0, dead: false, cargo: 0, state: 'idle', pile: null, build: null, repair: null, face: -Math.PI / 2, ph: Math.random() * TAU, wp: null, stuckT: 0,
+    air: !!U.air, aa: !!U.aa, ammo: U.ammo || 0, rearmT: 0 };
   G.units.push(u); return u;
 }
 const alive = e => !e.dead;
@@ -175,6 +181,7 @@ function startLevel(n) {
   mkBldg('red', 'barracks', 350, 150, true);
   if (n >= 2) mkBldg('red', 'factory', 500, 262, true);
   if (n >= 3) { mkBldg('red', 'turret', 380, 300, true); mkBldg('red', 'turret', 620, 300, true); }
+  if (n >= 4) mkBldg('red', 'airfield', 820, 140, true);
   if (n >= 5) { mkBldg('red', 'turret', 500, 360, true); mkBldg('red', 'barracks', 800, 200, true); }
   mkUnit('red', 'harvester', 650, 210); mkUnit('red', 'harvester', 700, 230);
   for (let i = 0; i < Math.min(4, n); i++) mkUnit('red', i % 3 === 2 && n >= 2 ? 'tank' : i % 2 ? 'rocket' : 'rifle', 440 + i * 30, 330);
@@ -197,7 +204,7 @@ function orderMove(units, x, y, attack) {
     if (UNITS[u.type].builder) { u.build = null; u.repair = null; }
   });
 }
-function orderAttack(units, target) { for (const u of units) { u.wp = null; if (u.dps > 0) { u.order = 'attack'; u.target = target; } else { u.order = 'move'; u.tx = target.x; u.ty = target.y; } } }
+function orderAttack(units, target) { for (const u of units) { u.wp = null; if (u.dps > 0 && canHit(u, target)) { u.order = 'attack'; u.target = target; } else { u.order = 'move'; u.tx = target.x; u.ty = target.y; } } }
 function selected() { return G.sel.map(id => G.units.find(u => u.id === id) || G.bldgs.find(b => b.id === id)).filter(e => e && !e.dead); }
 function selectedUnits() { return selected().filter(e => e.kind === 'unit'); }
 function selectArmy() { G.sel = own('blue').units.filter(u => u.dps > 0).map(u => u.id); G.panelDirty = true; }
@@ -234,9 +241,14 @@ function orderRepair(units, b) {
 }
 
 // ---------- simulation ----------
+// Can this unit or building shoot that target? Aircraft need an anti-air shooter; jets only bomb the ground.
+function canHit(src, tgt) {
+  if (tgt.kind === 'unit' && tgt.air) return src.kind === 'bldg' ? !!BUILDINGS[src.type].aa : src.aa;
+  return true;
+}
 function nearestEnemy(e, range, team) {
   let best = null, bd = range * range;
-  for (const u of G.units) { if (u.dead || u.team === team) continue; const d2 = (u.x - e.x) ** 2 + (u.y - e.y) ** 2; if (d2 < bd) { bd = d2; best = u; } }
+  for (const u of G.units) { if (u.dead || u.team === team || !canHit(e, u)) continue; const d2 = (u.x - e.x) ** 2 + (u.y - e.y) ** 2; if (d2 < bd) { bd = d2; best = u; } }
   for (const b of G.bldgs) { if (b.dead || b.team === team) continue; const rc = rectOf(b); const nx = clamp(e.x, rc.x, rc.x + rc.w), ny = clamp(e.y, rc.y, rc.y + rc.h); const d2 = (nx - e.x) ** 2 + (ny - e.y) ** 2; if (d2 < bd) { bd = d2; best = b; } }
   return best;
 }
@@ -262,13 +274,17 @@ function fireAt(src, tgt, dt) {
   src.cd -= dt;
   if (src.cd > 0) return;
   const rocket = src.kind === 'unit' && src.type === 'rocket';
-  const period = rocket ? 1.3 : 0.55;           // rockets: slow, heavy single shots (same DPS)
+  const bomb = src.kind === 'unit' && src.type === 'jet';
+  if (bomb && src.ammo <= 0) return;
+  const period = rocket ? 1.3 : bomb ? 0.5 : 0.55;           // rockets: slow, heavy single shots (same DPS)
   src.cd = period;
+  if (bomb) src.ammo--;
   const tx = tgt.kind === 'bldg' ? clamp(src.x, tgt.x - tgt.w / 2, tgt.x + tgt.w / 2) : tgt.x, ty = tgt.kind === 'bldg' ? clamp(src.y, tgt.y - tgt.h / 2, tgt.y + tgt.h / 2) : tgt.y;
   src.face = Math.atan2(ty - src.y, tx - src.x);
   const heavy = src.kind === 'bldg' || UNITS[src.type].vehicle;
   G.shots.push({ x: src.x, y: src.y, tx, ty, life: heavy ? 0.25 : rocket ? 0.3 : 0.12, heavy, rocket, team: src.team });
   if (rocket) boom(tx, ty, 4);
+  if (bomb) { boom(tx, ty, 12); G.shake = Math.max(G.shake, 0.4); }
   damage(tgt, src.dps * period, src);
   if (Math.random() < 0.5) beep(heavy ? 120 : rocket ? 300 : 900, heavy ? 0.12 : rocket ? 0.18 : 0.04, heavy ? 'sawtooth' : rocket ? 'sawtooth' : 'square', 0.025, heavy ? 50 : rocket ? 60 : 300);
 }
@@ -276,6 +292,11 @@ function fireAt(src, tgt, dt) {
 // corners, so units flow around obstacles instead of grinding against them or the map edge.
 function moveToward(u, x, y, dt, stopAt) {
   if (Math.hypot(x - u.x, y - u.y) <= stopAt) { u.wp = null; u.stuckT = 0; return true; }
+  if (u.air) { // aircraft: straight line, nothing on the ground is in the way
+    const dx = x - u.x, dy = y - u.y, d = Math.hypot(dx, dy) || 1, sp = Math.min(d, u.speed * dt);
+    u.x = clamp(u.x + dx / d * sp, EDGE, MW - EDGE); u.y = clamp(u.y + dy / d * sp, EDGE, MH - EDGE); u.face = Math.atan2(dy, dx);
+    return false;
+  }
   if (u.wp && Math.hypot(u.wp.x - u.x, u.wp.y - u.y) <= 4) u.wp = null;
   const gx = u.wp ? u.wp.x : x, gy = u.wp ? u.wp.y : y;
   const dx = gx - u.x, dy = gy - u.y, d = Math.hypot(dx, dy) || 1;
@@ -353,13 +374,26 @@ function updateUnit(u, dt) {
     }
     return;
   }
+  // jets: out of bombs -> fly home to the nearest airfield and reload
+  if (U.ammo) {
+    if (u.ammo <= 0 || u.state === 'rearm') {
+      const pad = G.bldgs.filter(b => !b.dead && b.team === team && b.type === 'airfield' && b.progress >= 1).sort((a, b) => dist(a, u) - dist(b, u))[0];
+      if (!pad) { u.state = 'idle'; u.order = null; u.target = null; return; }   // no airfield: circle helplessly
+      u.state = 'rearm'; u.target = null;
+      if (moveToward(u, pad.x, pad.y, dt, 6)) {
+        u.rearmT += dt; u.face = -Math.PI / 2;
+        if (u.rearmT >= REARM_TIME) { u.rearmT = 0; u.ammo = U.ammo; u.state = 'idle'; if (team === 'blue') { G.floats.push({ x: u.x, y: u.y - 16, text: 'REARMED', life: 0.9, color: '#67e8f9' }); } }
+      }
+      return;
+    }
+  }
   // combat units
   if (u.order === 'attack') {
     if (!u.target || u.target.dead) { u.order = null; u.target = null; return; }
     // While marching on a building, shoot back at any enemy unit already in range.
     if (u.target.kind === 'bldg') {
       let foe = null, bd = u.range * u.range;
-      for (const e of G.units) { if (e.dead || e.team === team || e.dps <= 0) continue; const d2 = (e.x - u.x) ** 2 + (e.y - u.y) ** 2; if (d2 < bd) { bd = d2; foe = e; } }
+      for (const e of G.units) { if (e.dead || e.team === team || e.dps <= 0 || !canHit(u, e)) continue; const d2 = (e.x - u.x) ** 2 + (e.y - u.y) ** 2; if (d2 < bd) { bd = d2; foe = e; } }
       if (foe) { fireAt(u, foe, dt); return; }
     }
     if (edgeDist(u, u.target) > u.range) moveToward(u, u.target.x, u.target.y, dt, u.range - 4);
@@ -386,7 +420,7 @@ function updateBuilding(b, dt) {
     if (b.prodT >= time) {
       b.prodT = 0; b.queue.shift();
       const side = doorSide(b), [sx, sy] = SIDES[side], door = sidePoint(b, side, UNITS[type].r + 6), rally = sidePoint(b, side, 64);
-      const u = mkUnit(b.team, type, door.x + sy * (Math.random() - 0.5) * 24, door.y + sx * (Math.random() - 0.5) * 24);
+      const u = UNITS[type].air ? mkUnit(b.team, type, b.x, b.y) : mkUnit(b.team, type, door.x + sy * (Math.random() - 0.5) * 24, door.y + sx * (Math.random() - 0.5) * 24);
       if (b.team === 'blue') { G.stats.trained++; G.panelDirty = true; if (b.rally && !UNITS[type].harvester) orderMove([u], b.rally.x, b.rally.y, u.dps > 0); else orderMove([u], rally.x, rally.y, false); if (UNITS[type].harvester) u.state = 'idle', u.order = null; }
       else orderMove([u], 500 + (Math.random() - 0.5) * 200, 470, true);
     }
@@ -407,11 +441,13 @@ function updateAI(dt) {
   if (harvesters < 2 && supply) queueUnit(supply, 'harvester');
   const barracks = mine.bldgs.filter(b => b.type === 'barracks' && b.progress >= 1 && b.queue.length < 1);
   const factory = mine.bldgs.filter(b => b.type === 'factory' && b.progress >= 1 && b.queue.length < 1);
+  const airfield = mine.bldgs.filter(b => b.type === 'airfield' && b.progress >= 1 && b.queue.length < 1);
   const army = mine.units.filter(u => u.dps > 0);
   const cap = 6 + L.n * 3;
   if (army.length + mine.bldgs.reduce((a, b) => a + b.queue.length, 0) < cap) {
     ai.mix++;
-    if (factory.length && ai.mix % 3 === 0) queueUnit(factory[0], Math.random() < 0.7 ? 'tank' : 'buggy');
+    if (airfield.length && ai.mix % 4 === 1) queueUnit(airfield[0], Math.random() < 0.6 ? 'heli' : 'jet');
+    else if (factory.length && ai.mix % 3 === 0) queueUnit(factory[0], Math.random() < 0.7 ? 'tank' : 'buggy');
     else if (barracks.length) queueUnit(barracks[ai.mix % barracks.length], Math.random() < 0.55 ? 'rifle' : 'rocket');
   }
   if (ai.waveT <= 0 || army.filter(u => !u.order).length >= ai.waveSize) {
@@ -435,12 +471,12 @@ function update(dt) {
   for (let i = 0; i < us.length; i++) {
     const a = us[i];
     for (let j = i + 1; j < us.length; j++) {
-      const b = us[j]; const dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy, md = a.r + b.r + 2;
+      const b = us[j]; if (a.air !== b.air) continue; const dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy, md = a.r + b.r + 2;
       if (d2 < md * md && d2 > 0.01) { const d = Math.sqrt(d2), push = (md - d) / 2; a.x -= dx / d * push; a.y -= dy / d * push; b.x += dx / d * push; b.y += dy / d * push; }
       else if (d2 <= 0.01) { a.x += Math.random() - 0.5; a.y += Math.random() - 0.5; }
     }
     for (const bl of G.bldgs) {
-      if (bl.dead) continue; const rc = rectOf(bl);
+      if (bl.dead || a.air) continue; const rc = rectOf(bl);
       if (!circleRect(a.x, a.y, a.r, rc)) continue;
       const pl = a.x + a.r - rc.x, pr = rc.x + rc.w - (a.x - a.r), pt = a.y + a.r - rc.y, pb = rc.y + rc.h - (a.y - a.r);
       const m = Math.min(pl, pr, pt, pb);
@@ -505,6 +541,15 @@ function drawBuilding(b) {
   else if (b.type === 'supply') { ctx.fillStyle = '#854d0e'; for (let i = 0; i < 3; i++) { ctx.fillRect(b.x - 26 + i * 18, b.y - 6, 14, 18); } ctx.fillStyle = '#fde68a'; ctx.fillRect(b.x - 30, b.y - 12, 60, 4); }
   else if (b.type === 'barracks') { ctx.fillStyle = '#14532d'; roundRect(ctx, b.x - 24, b.y - 10, 48, 26, 4); ctx.fill(); ctx.fillStyle = '#86efac'; ctx.fillRect(b.x - 4, b.y - 2, 8, 18); }
   else if (b.type === 'factory') { ctx.fillStyle = '#3b0764'; roundRect(ctx, b.x - 36, b.y - 12, 72, 30, 4); ctx.fill(); ctx.fillStyle = '#c4b5fd'; ctx.fillRect(b.x - 30, b.y - 24, 10, 14); ctx.fillRect(b.x - 14, b.y - 24, 10, 14); ctx.fillStyle = '#1e1b4b'; ctx.fillRect(b.x - 12, b.y + 2, 24, 14); }
+  else if (b.type === 'airfield') {
+    // runway with centre dashes, a hangar, a windsock, landing lights
+    ctx.fillStyle = '#334155'; ctx.fillRect(rc.x + 8, b.y - 12, rc.w - 16, 24);
+    ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2; ctx.setLineDash([8, 6]); ctx.beginPath(); ctx.moveTo(rc.x + 12, b.y); ctx.lineTo(rc.x + rc.w - 12, b.y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#e2e8f0'; for (let i = 0; i < 4; i++) { ctx.fillRect(rc.x + 12 + i * 4, b.y - 10, 2, 20); ctx.fillRect(rc.x + rc.w - 14 - i * 4, b.y - 10, 2, 20); }
+    ctx.fillStyle = '#155e75'; roundRect(ctx, rc.x + 14, rc.y + 8, 40, 18, 5); ctx.fill(); ctx.fillStyle = '#0f172a'; ctx.fillRect(rc.x + 22, rc.y + 16, 24, 10);
+    ctx.fillStyle = '#e2e8f0'; ctx.fillRect(rc.x + rc.w - 22, rc.y + 8, 2, 16); ctx.fillStyle = '#fb923c'; const ws = Math.sin(G.t * 3 + b.x) * 2; ctx.beginPath(); ctx.moveTo(rc.x + rc.w - 20, rc.y + 9); ctx.lineTo(rc.x + rc.w - 6, rc.y + 12 + ws); ctx.lineTo(rc.x + rc.w - 20, rc.y + 15); ctx.closePath(); ctx.fill();
+    const blink = Math.floor(G.t * 2) % 2 === 0; ctx.fillStyle = blink ? '#f87171' : '#7f1d1d'; ctx.beginPath(); ctx.arc(rc.x + 10, rc.y + rc.h - 10, 2.5, 0, TAU); ctx.fill(); ctx.fillStyle = blink ? '#7f1d1d' : '#f87171'; ctx.beginPath(); ctx.arc(rc.x + rc.w - 10, rc.y + rc.h - 10, 2.5, 0, TAU); ctx.fill();
+  }
   else if (b.type === 'turret') { ctx.fillStyle = '#1f2937'; ctx.beginPath(); ctx.arc(b.x, b.y, 14, 0, TAU); ctx.fill(); ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.aim); ctx.fillStyle = '#9ca3af'; ctx.fillRect(0, -4, 26, 8); ctx.restore(); ctx.fillStyle = T.main; ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, TAU); ctx.fill(); }
   if (b.progress < 1) {
     ctx.fillStyle = 'rgba(15,23,42,0.6)'; ctx.fillRect(rc.x, rc.y, rc.w, rc.h * (1 - b.progress));
@@ -527,8 +572,34 @@ function drawRally(b) {
   const wave = Math.sin(G.t * 6 + r.x) * 1.5;
   ctx.fillStyle = sel ? '#fff' : T.main; ctx.beginPath(); ctx.moveTo(r.x + 1, r.y - 22); ctx.lineTo(r.x + 15, r.y - 17 + wave); ctx.lineTo(r.x + 1, r.y - 11); ctx.closePath(); ctx.fill();
 }
+function drawAircraft(u) {
+  const U = UNITS[u.type], T = TEAM[u.team], hit = u.hit > 0, sel = G.sel.includes(u.id);
+  const grounded = u.state === 'rearm' && u.rearmT > 0, lift = grounded ? 0 : 1;
+  // ground shadow, offset by altitude
+  ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.save(); ctx.translate(u.x + 14 * lift, u.y + 18 * lift); ctx.rotate(u.face + Math.PI / 2); ctx.beginPath(); ctx.ellipse(0, 0, u.r * 0.9, u.r * 1.3, 0, 0, TAU); ctx.fill(); ctx.restore();
+  if (sel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(u.x, u.y, u.r + 6, 0, TAU); ctx.stroke(); }
+  ctx.save(); ctx.translate(u.x, u.y - 6 * lift); ctx.rotate(u.face + Math.PI / 2);
+  const body = hit ? '#fff' : T.dark, trim = hit ? '#fff' : T.main;
+  if (u.type === 'heli') {
+    ctx.fillStyle = body; ctx.fillRect(-2, 2, 4, 16); ctx.fillRect(-6, 15, 12, 3);                      // tail boom + fin
+    ctx.fillStyle = body; roundRect(ctx, -7, -10, 14, 18, 6); ctx.fill(); ctx.fillStyle = trim; roundRect(ctx, -5, -8, 10, 8, 4); ctx.fill();   // cabin + canopy
+    ctx.fillStyle = '#1e293b'; ctx.fillRect(-12, -1, 24, 2.5);                                            // stub wings with pods
+    ctx.fillStyle = '#374151'; ctx.fillRect(-13, -3, 4, 6); ctx.fillRect(9, -3, 4, 6);
+    ctx.save(); ctx.rotate(G.t * 40 + u.ph); ctx.strokeStyle = 'rgba(15,23,42,0.75)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-17, 0); ctx.lineTo(17, 0); ctx.moveTo(0, -17); ctx.lineTo(0, 17); ctx.stroke(); ctx.restore();   // main rotor
+    ctx.strokeStyle = 'rgba(15,23,42,0.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, 17, 0, TAU); ctx.stroke();            // rotor disc blur
+  } else {
+    ctx.fillStyle = body; ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(4, -4); ctx.lineTo(16, 6); ctx.lineTo(16, 10); ctx.lineTo(4, 6); ctx.lineTo(3, 12); ctx.lineTo(8, 16); ctx.lineTo(-8, 16); ctx.lineTo(-3, 12); ctx.lineTo(-4, 6); ctx.lineTo(-16, 10); ctx.lineTo(-16, 6); ctx.lineTo(-4, -4); ctx.closePath(); ctx.fill();   // swept-wing silhouette
+    ctx.fillStyle = trim; ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(2.5, -2); ctx.lineTo(-2.5, -2); ctx.closePath(); ctx.fill();   // canopy
+    ctx.fillStyle = '#fb923c'; ctx.fillRect(-3, 14, 2, 3 + Math.random() * 3); ctx.fillRect(1, 14, 2, 3 + Math.random() * 3);          // afterburners
+    ctx.fillStyle = '#fde047'; for (let i = 0; i < u.ammo; i++) ctx.fillRect(-7 + i * 4, 4, 2, 5);                                     // bombs under the wings
+  }
+  ctx.restore();
+  if (u.hp < u.maxHp || sel) { const w = u.r * 2.4; ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(u.x - w / 2, u.y - u.r - 15, w, 3); ctx.fillStyle = u.hp / u.maxHp > 0.5 ? '#4ade80' : '#f87171'; ctx.fillRect(u.x - w / 2, u.y - u.r - 15, w * clamp(u.hp / u.maxHp, 0, 1), 3); }
+  if (U.ammo && u.ammo <= 0 && u.team === 'blue') { ctx.fillStyle = '#fde047'; ctx.font = 'bold 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('REARMING', u.x, u.y + u.r + 12); }
+}
 function drawUnit(u) {
   const U = UNITS[u.type], T = TEAM[u.team], hit = u.hit > 0;
+  if (U.air) { drawAircraft(u); return; }
   const sel = G.sel.includes(u.id);
   if (sel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(u.x, u.y, u.r + 5, 0, TAU); ctx.stroke(); }
   ctx.save(); ctx.translate(u.x, u.y);
@@ -588,7 +659,7 @@ function draw() {
   // orders
   for (const id of G.sel) { const u = G.units.find(x => x.id === id); if (u && u.order && u.tx != null && u.kind === 'unit') { ctx.strokeStyle = u.order === 'amove' ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1; ctx.setLineDash([3, 5]); ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(u.tx, u.ty); ctx.stroke(); ctx.setLineDash([]); } }
   for (const u of G.units) if (!UNITS[u.type].vehicle) drawUnit(u);
-  for (const u of G.units) if (UNITS[u.type].vehicle) drawUnit(u);
+  for (const u of G.units) if (UNITS[u.type].vehicle && !UNITS[u.type].air) drawUnit(u);
   for (const s of G.shots) {
     if (s.rocket) { // smoke trail + orange warhead flying toward the target, then a burst
       const k = 1 - s.life / 0.3, px = s.x + (s.tx - s.x) * Math.min(1, k * 1.6), py = s.y + (s.ty - s.y) * Math.min(1, k * 1.6);
@@ -600,6 +671,7 @@ function draw() {
   }
   for (const p of G.parts) { ctx.globalAlpha = clamp(p.life * 2, 0, 1); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill(); }
   ctx.globalAlpha = 1;
+  for (const u of G.units) if (UNITS[u.type].air) drawUnit(u);   // aircraft above everything on the ground
   for (const f of G.floats) { ctx.globalAlpha = clamp(f.life, 0, 1); ctx.fillStyle = f.color; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(f.text, f.x, f.y); }
   ctx.globalAlpha = 1;
   // placement ghost
@@ -672,7 +744,7 @@ function renderPanel() {
     const hint = su.some(u => UNITS[u.type].builder) ? (su.find(u => UNITS[u.type].builder).repair ? 'Repairing ' + BUILDINGS[su.find(u => UNITS[u.type].builder).repair.type].name : 'Tap a damaged building to repair it') : one ? one.role : '';
     html = `<div class="ptitle">${su.length ? (one ? one.name : su.length + ' units selected') : 'Build (needs a Dozer)'}${hint ? ' <span class="hint">· ' + hint + '</span>' : ''}</div><div class="prow">`;
     if (!su.length || su.some(u => UNITS[u.type].builder)) {
-      for (const t of ['supply', 'barracks', 'factory', 'turret']) { const B = BUILDINGS[t]; html += `<button class="pb" data-build="${t}" ${!hasDozer || G.credits.blue < bldgCost(t, 'blue') ? 'disabled' : ''}><b>${B.name}</b><span>$${bldgCost(t, 'blue')}</span></button>`; }
+      for (const t of ['supply', 'barracks', 'factory', 'turret', 'airfield']) { const B = BUILDINGS[t]; html += `<button class="pb" data-build="${t}" ${!hasDozer || G.credits.blue < bldgCost(t, 'blue') ? 'disabled' : ''}><b>${B.name}</b><span>$${bldgCost(t, 'blue')}</span></button>`; }
     }
     if (su.length) html += `<button class="pb" data-act="stop">STOP</button>`;
     html += `<button class="pb" data-act="army">SELECT ARMY</button>${su.length ? '<button class="pb" data-act="clear">DESELECT</button>' : ''}</div>`;
